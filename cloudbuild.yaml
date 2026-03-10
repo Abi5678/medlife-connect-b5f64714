@@ -1,0 +1,79 @@
+# =============================================================================
+# Cloud Build — MedLive Connect CI/CD Pipeline
+# =============================================================================
+# Trigger this from Cloud Build console or gcloud:
+#   gcloud builds submit --config cloudbuild.yaml --project YOUR_PROJECT_ID .
+#
+# Or connect this repo to a Cloud Build trigger for automatic deploys on push.
+# =============================================================================
+
+substitutions:
+  _PROJECT_ID: "medlive-488722"
+  _REGION: "us-central1"
+  _SERVICE_NAME: "medlive"
+  _IMAGE: "gcr.io/${_PROJECT_ID}/${_SERVICE_NAME}"
+
+steps:
+  # ---------------------------------------------------------------------------
+  # Step 1: Build the multi-stage Docker image
+  # (Node 20 → React SPA, then Python 3.11 → FastAPI + dist/)
+  # ---------------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build"
+    args:
+      - build
+      - "--tag=${_IMAGE}:$BUILD_ID"
+      - "--tag=${_IMAGE}:latest"
+      - "--cache-from=${_IMAGE}:latest"
+      - "."
+    timeout: "1200s"   # 20 min for Node install + Python deps
+
+  # ---------------------------------------------------------------------------
+  # Step 2: Push image to Container Registry
+  # ---------------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push"
+    waitFor: ["build"]
+    args:
+      - push
+      - "--all-tags"
+      - "${_IMAGE}"
+
+  # ---------------------------------------------------------------------------
+  # Step 3: Deploy to Cloud Run
+  #   --session-affinity  → sticky WebSocket routing (same instance per client)
+  #   --timeout 3600      → 1-hour timeout for long-lived voice sessions
+  #   --min-instances 1   → always warm, no cold-start WebSocket failures
+  # ---------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
+    waitFor: ["push"]
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - "${_SERVICE_NAME}"
+      - "--image=${_IMAGE}:$BUILD_ID"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--session-affinity"
+      - "--min-instances=1"
+      - "--max-instances=10"
+      - "--concurrency=80"
+      - "--timeout=3600"
+      - "--memory=2Gi"
+      - "--cpu=2"
+      - "--set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},GOOGLE_GENAI_USE_VERTEXAI=FALSE,MEDLIVE_MODEL=gemini-live-2.5-flash-native-audio,USE_FIRESTORE=true,GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-admin-sdk.json"
+      - "--set-secrets=GOOGLE_API_KEY=medlive-google-api-key:latest,/secrets/firebase-admin-sdk.json=medlive-firebase-admin:latest,REMINDERS_TRIGGER_SECRET=medlive-reminders-secret:latest"
+      - "--project=${_PROJECT_ID}"
+
+images:
+  - "${_IMAGE}:$BUILD_ID"
+  - "${_IMAGE}:latest"
+
+timeout: "2400s"   # 40 min total pipeline timeout
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: "E2_HIGHCPU_8"   # Faster Node/npm build

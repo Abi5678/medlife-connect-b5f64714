@@ -1,0 +1,616 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Mic, MicOff, Phone, Globe, Volume2, Wifi, WifiOff,
+  Trash2, Send, Camera, CameraOff, CheckCircle2, AlertTriangle,
+  Pill, Heart, Utensils, CalendarCheck, ShieldAlert,
+} from "lucide-react";
+import AppLayout from "@/components/AppLayout";
+import { useVoiceGuardian } from "@/hooks/useVoiceGuardian";
+import { LANGUAGE_PERSONAS } from "@/lib/voiceConfig";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "@/hooks/use-toast";
+import { pushUIEvent } from "@/hooks/useUIEventStore";
+import type { UIEvent } from "@/hooks/useVoiceGuardian";
+
+const statusLabels: Record<string, string> = {
+  disconnected: "Tap to connect",
+  connecting: "Connecting to backend\u2026",
+  connected: "Waiting for Gemini\u2026",
+  ready: "Connected \u2014 speaking to Gemini",
+  error: "Connection failed \u2014 tap to retry",
+};
+
+// Map UI event targets to display info
+function renderUICard(event: UIEvent, index: number) {
+  const target = event.target;
+
+  if (target === "pill_verified") {
+    const data = event as Record<string, unknown>;
+    const verified = data.verified ?? ((data.data as Record<string, unknown>)?.verified);
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className={`flex items-start gap-3 rounded-lg border p-4 ${verified ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
+          }`}
+      >
+        {verified ? (
+          <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-green-500" />
+        ) : (
+          <AlertTriangle size={20} className="mt-0.5 shrink-0 text-red-500" />
+        )}
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Pill Verification
+          </p>
+          <p className="text-sm font-medium">
+            {verified ? "Pill verified \u2014 safe to take" : "WARNING: Pill mismatch!"}
+          </p>
+          {(event.data as Record<string, unknown>)?.medication_name && (
+            <p className="text-xs text-muted-foreground">
+              {String((event.data as Record<string, unknown>).medication_name)}
+            </p>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (target === "medication_taken" || target === "medication_logged") {
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="flex items-start gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 p-4"
+      >
+        <Pill size={20} className="mt-0.5 shrink-0 text-blue-500" />
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Medication Logged
+          </p>
+          <p className="text-sm font-medium">
+            {(event.data as Record<string, unknown>)?.medication_name
+              ? `${String((event.data as Record<string, unknown>).medication_name)} recorded`
+              : "Medication dose recorded"}
+          </p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (target === "vital_logged") {
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="flex items-start gap-3 rounded-lg border border-purple-500/30 bg-purple-500/10 p-4"
+      >
+        <Heart size={20} className="mt-0.5 shrink-0 text-purple-500" />
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Vitals Logged
+          </p>
+          <p className="text-sm font-medium">
+            {(event.data as Record<string, unknown>)?.vital_type
+              ? `${String((event.data as Record<string, unknown>).vital_type)}: ${String((event.data as Record<string, unknown>).value)}`
+              : "Vital signs recorded"}
+          </p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (target === "meal_logged") {
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="flex items-start gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-4"
+      >
+        <Utensils size={20} className="mt-0.5 shrink-0 text-orange-500" />
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Meal Logged
+          </p>
+          <p className="text-sm font-medium">Meal recorded successfully</p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (target === "booking_confirmed") {
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="flex items-start gap-3 rounded-lg border border-green-500/30 bg-green-500/10 p-4"
+      >
+        <CalendarCheck size={20} className="mt-0.5 shrink-0 text-green-500" />
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Appointment Booked
+          </p>
+          <p className="text-sm font-medium">
+            {(event.data as Record<string, unknown>)?.hospital
+              ? `${String((event.data as Record<string, unknown>).hospital)} - ${String((event.data as Record<string, unknown>).date)}`
+              : "Appointment confirmed"}
+          </p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (target === "booking_emergency" || target === "emergency_alert") {
+    return (
+      <motion.div
+        key={`ui-${index}`}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="flex items-start gap-3 rounded-lg border-2 border-red-600 bg-red-600/20 p-4"
+      >
+        <ShieldAlert size={20} className="mt-0.5 shrink-0 text-red-600" />
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-red-600">
+            Emergency Alert
+          </p>
+          <p className="text-sm font-bold text-red-600">
+            Emergency protocol activated. Family has been notified.
+          </p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Default card for unknown events
+  return (
+    <motion.div
+      key={`ui-${index}`}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="flex items-start gap-3 rounded-lg border border-border bg-secondary/50 p-4"
+    >
+      <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-muted-foreground" />
+      <div>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          {target.replace(/_/g, " ")}
+        </p>
+        <p className="text-sm">Action completed</p>
+      </div>
+    </motion.div>
+  );
+}
+
+const VoiceGuardian = () => {
+  const navigate = useNavigate();
+  const { user, getIdToken } = useAuth();
+  const [selectedPersona, setSelectedPersona] = useState("en");
+  const [textInput, setTextInput] = useState("");
+  const [firebaseToken, setFirebaseToken] = useState<string>("demo");
+  const [cameraActive, setCameraActive] = useState(false);
+  const [uiEvents, setUIEvents] = useState<UIEvent[]>([]);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Get Firebase token on mount
+  useEffect(() => {
+    getIdToken().then((token) => {
+      if (token) setFirebaseToken(token);
+    });
+  }, [getIdToken]);
+
+  const handleUIEvent = useCallback((event: UIEvent) => {
+    // Agent-triggered page navigation
+    if (event.target === "navigate") {
+      const page = (event.data as Record<string, unknown>)?.page;
+      if (typeof page === "string") {
+        navigate(page);
+        return; // don't push navigate events to the activity panel
+      }
+    }
+
+    pushUIEvent(event);
+    setUIEvents((prev) => [...prev, event]);
+
+    // Toast for key events
+    if (event.target === "pill_verified") {
+      const data = (event.data ?? event) as Record<string, unknown>;
+      toast({
+        title: data.verified ? "Pill Verified" : "Pill Mismatch!",
+        description: data.verified
+          ? "This medication matches your prescription"
+          : "WARNING: This pill does not match your medications",
+        variant: data.verified ? "default" : "destructive",
+      });
+    } else if (event.target === "booking_emergency" || event.target === "emergency_alert") {
+      toast({
+        variant: "destructive",
+        title: "Emergency Alert",
+        description: "Emergency protocol activated",
+      });
+    }
+  }, [navigate]);
+
+  const {
+    status,
+    isListening,
+    isSpeaking,
+    transcript,
+    connect,
+    disconnect,
+    sendText,
+    sendImage,
+    clearTranscript,
+    avatarB64,
+  } = useVoiceGuardian({
+    userId: user?.uid,
+    token: firebaseToken,
+    persona: selectedPersona,
+    patientName: user?.displayName || undefined,
+    onError: (msg) => {
+      toast({
+        variant: "destructive",
+        title: "Voice Guardian",
+        description: msg,
+      });
+    },
+    onUIEvent: handleUIEvent,
+  });
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [transcript]);
+
+  const handleMicToggle = () => {
+    if (status === "connected" || status === "connecting" || status === "ready") {
+      disconnect();
+      stopCamera();
+    } else {
+      connect();
+    }
+  };
+
+  const handleSendText = () => {
+    if (textInput.trim() && (status === "connected" || status === "ready")) {
+      sendText(textInput.trim());
+      setTextInput("");
+    }
+  };
+
+  // Camera: start capturing frames
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: 640, height: 480 },
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraActive(true);
+
+      // Send JPEG frames every 1 second
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext("2d")!;
+
+      cameraIntervalRef.current = setInterval(() => {
+        if (videoRef.current && videoRef.current.readyState >= 2) {
+          ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+          const base64 = dataUrl.split(",")[1];
+          sendImage(base64, "image/jpeg");
+        }
+      }, 1000);
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Camera",
+        description: "Camera access denied. Please allow camera access.",
+      });
+    }
+  }, [sendImage]);
+
+  const stopCamera = useCallback(() => {
+    if (cameraIntervalRef.current) {
+      clearInterval(cameraIntervalRef.current);
+      cameraIntervalRef.current = null;
+    }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  const toggleCamera = () => {
+    if (cameraActive) {
+      stopCamera();
+    } else {
+      startCamera();
+    }
+  };
+
+  // Cleanup camera on unmount
+  useEffect(() => {
+    return () => { stopCamera(); };
+  }, [stopCamera]);
+
+  const isActive = status === "connected" || status === "ready";
+
+  return (
+    <AppLayout>
+      <div className="mb-12">
+        <h1 className="font-display text-5xl font-bold tracking-tight lg:text-7xl">
+          Voice
+          <br />
+          <em className="text-primary">Guardian</em>
+        </h1>
+        <div className="rule-thick mt-6 mb-8 max-w-32" />
+        <p className="max-w-lg text-lg text-muted-foreground">
+          Your AI health companion — speak naturally in your language
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Main voice area */}
+        <div className="rounded-lg border border-border bg-card p-8 text-center lg:col-span-2">
+          {/* Connection status */}
+          <div className="mb-6 flex items-center justify-center gap-2">
+            {status === "ready" ? (
+              <Wifi size={14} strokeWidth={1.5} className="text-success" />
+            ) : isActive ? (
+              <Wifi size={14} strokeWidth={1.5} className="animate-pulse text-primary" />
+            ) : status === "error" ? (
+              <WifiOff size={14} strokeWidth={1.5} className="text-destructive" />
+            ) : (
+              <WifiOff size={14} strokeWidth={1.5} className="text-muted-foreground" />
+            )}
+            <span
+              className={`font-mono text-[10px] uppercase tracking-widest ${status === "ready"
+                ? "text-success"
+                : isActive
+                  ? "text-primary"
+                  : status === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                }`}
+            >
+              {statusLabels[status]}
+            </span>
+          </div>
+
+          {/* Camera feed */}
+          {cameraActive && (
+            <div className="relative mx-auto mb-6 max-w-md overflow-hidden rounded-lg border border-border">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-auto w-full"
+              />
+              <div className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-white">
+                LIVE
+              </div>
+            </div>
+          )}
+
+          {/* Mic Button / Avatar */}
+          <div className="relative mx-auto mb-8 inline-block">
+            <button
+              onClick={handleMicToggle}
+              disabled={status === "connecting"}
+              className={`relative flex h-32 w-32 items-center justify-center overflow-hidden rounded-full transition-all duration-150 disabled:opacity-50 ${isActive
+                ? "bg-destructive text-destructive-foreground shadow-lg shadow-destructive/30"
+                : "bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40"
+                }`}
+            >
+              {avatarB64 ? (
+                <div className="relative h-full w-full">
+                  <img
+                    src={avatarB64}
+                    alt="Companion"
+                    className="h-full w-full object-cover"
+                  />
+                  {/* Lip Sync / Speaking Overlay */}
+                  {isSpeaking && (
+                    <motion.div
+                      animate={{
+                        scaleY: [1, 1.2, 1, 1.3, 1],
+                        opacity: [0.3, 0.6, 0.3]
+                      }}
+                      transition={{ repeat: Infinity, duration: 0.5 }}
+                      className="absolute bottom-4 left-1/2 h-4 w-8 -translate-x-1/2 rounded-full bg-white/40 blur-sm"
+                    />
+                  )}
+                </div>
+              ) : (
+                status === "connecting" ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                    className="h-8 w-8 rounded-full border-2 border-primary-foreground border-t-transparent"
+                  />
+                ) : isActive ? (
+                  <MicOff size={32} strokeWidth={1.5} />
+                ) : (
+                  <Mic size={32} strokeWidth={1.5} />
+                )
+              )}
+            </button>
+            {isActive && isListening && !isSpeaking && (
+              <motion.div
+                animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.1, 0.4] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                className="absolute -inset-4 rounded-full border-2 border-primary/30"
+              />
+            )}
+          </div>
+
+          {/* Speaking indicator */}
+          {isSpeaking && (
+            <div className="mb-4 flex items-center justify-center gap-1">
+              {[...Array(5)].map((_, i) => (
+                <motion.div
+                  key={i}
+                  animate={{ height: [4, 16, 4] }}
+                  transition={{ repeat: Infinity, duration: 0.6, delay: i * 0.1 }}
+                  className="w-1 rounded-full bg-primary"
+                />
+              ))}
+              <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-primary">
+                Speaking
+              </span>
+            </div>
+          )}
+
+          <p className="mb-8 font-mono text-xs uppercase tracking-widest text-muted-foreground">
+            {isListening ? "Listening\u2026 speak naturally" : "Tap the microphone to start"}
+          </p>
+
+          {/* Controls */}
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={toggleCamera}
+              disabled={!isActive}
+              className={`flex h-12 w-12 items-center justify-center rounded-full border transition-colors duration-150 disabled:opacity-30 ${cameraActive
+                ? "border-green-500/30 bg-green-500/10 text-green-500"
+                : "border-border bg-card text-foreground hover:bg-secondary"
+                }`}
+              title={cameraActive ? "Stop camera" : "Start camera for pill/food detection"}
+            >
+              {cameraActive ? <CameraOff size={20} strokeWidth={1.5} /> : <Camera size={20} strokeWidth={1.5} />}
+            </button>
+            <button className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors duration-150 hover:bg-secondary">
+              <Volume2 size={20} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={() => { disconnect(); stopCamera(); }}
+              disabled={!isActive}
+              className="flex h-12 w-12 items-center justify-center rounded-full border border-destructive/30 bg-destructive/10 text-destructive transition-colors duration-150 hover:bg-destructive/20 disabled:opacity-30"
+            >
+              <Phone size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          {/* Language/persona selector */}
+          <div className="mt-8 flex items-center justify-center gap-2">
+            <Globe size={16} strokeWidth={1.5} className="text-muted-foreground" />
+            {Object.values(LANGUAGE_PERSONAS).map((lang) => (
+              <button
+                key={lang.code}
+                onClick={() => setSelectedPersona(lang.code)}
+                disabled={isActive}
+                className={`rounded-full px-4 py-1.5 font-mono text-xs uppercase tracking-widest transition-colors duration-150 disabled:opacity-60 ${selectedPersona === lang.code
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+              >
+                {lang.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Text input fallback */}
+          {isActive && (
+            <div className="mx-auto mt-6 flex max-w-md gap-2">
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSendText()}
+                placeholder="Type a message instead…"
+                className="flex-1 rounded-md border border-border bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none"
+              />
+              <button
+                onClick={handleSendText}
+                disabled={!textInput.trim()}
+                className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors disabled:opacity-30"
+              >
+                <Send size={16} strokeWidth={1.5} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right column: Transcript + UI Events */}
+        <div className="flex flex-col gap-6">
+          {/* Transcript */}
+          <div className="flex flex-col rounded-lg border border-border bg-card">
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <h2 className="font-display text-xl font-bold tracking-tight">Conversation</h2>
+              {transcript.length > 0 && (
+                <button
+                  onClick={clearTranscript}
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  title="Clear transcript"
+                >
+                  <Trash2 size={14} strokeWidth={1.5} />
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 space-y-3 overflow-y-auto p-4" style={{ maxHeight: "350px" }}>
+              {transcript.length === 0 ? (
+                <div className="py-12 text-center">
+                  <Mic size={24} strokeWidth={1} className="mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                    {isActive ? "Waiting for speech\u2026" : "Start a conversation"}
+                  </p>
+                </div>
+              ) : (
+                <AnimatePresence>
+                  {transcript.map((msg, i) => (
+                    <motion.div
+                      key={`${msg.timestamp}-${i}`}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className={`rounded-md border-l-4 p-4 ${msg.role === "assistant"
+                        ? "border-primary bg-primary/5"
+                        : "border-accent bg-accent/5"
+                        }`}
+                    >
+                      <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                        {msg.role === "assistant" ? "MedLive" : "You"}
+                      </p>
+                      <p className="text-sm leading-relaxed">{msg.text}</p>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
+              <div ref={transcriptEndRef} />
+            </div>
+          </div>
+
+          {/* Generative UI Events */}
+          {uiEvents.length > 0 && (
+            <div className="flex flex-col rounded-lg border border-border bg-card">
+              <div className="border-b border-border p-4">
+                <h2 className="font-display text-xl font-bold tracking-tight">Activity</h2>
+              </div>
+              <div className="space-y-3 overflow-y-auto p-4" style={{ maxHeight: "250px" }}>
+                <AnimatePresence>
+                  {uiEvents.map((event, i) => renderUICard(event, i))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </AppLayout>
+  );
+};
+
+export default VoiceGuardian;
