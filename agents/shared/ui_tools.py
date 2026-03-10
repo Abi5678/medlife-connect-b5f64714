@@ -36,7 +36,7 @@ def navigate_to_page(page: str, tool_context=None) -> dict:
     Args:
         page: Target route path. One of: /exercise, /food, /pills, /booking
     """
-    valid = {"/exercise", "/food", "/pills", "/booking"}
+    valid = {"/exercise", "/food", "/pills", "/booking", "/prescriptions"}
     if page not in valid:
         return {"status": "error", "message": f"Unknown page: {page}. Valid: {valid}"}
     logger.info(f"Navigating app to {page}")

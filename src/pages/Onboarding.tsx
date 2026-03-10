@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ArrowRight, ArrowLeft, Wand2, Loader2, Upload } from "lucide-react";
+import { Sparkles, ArrowRight, ArrowLeft, Wand2, Loader2, Upload, User } from "lucide-react";
 import { useRef } from "react";
 import { PRESET_PERSONAS, Persona, saveOnboardingState } from "@/lib/personas";
+import { saveProfile, generateAvatar } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
-type Step = "welcome" | "select" | "custom" | "confirm";
+type Step = "welcome" | "select" | "custom" | "details" | "confirm";
 
 const Onboarding = () => {
   const navigate = useNavigate();
@@ -17,29 +19,116 @@ const Onboarding = () => {
   const [generating, setGenerating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Patient Details State
+  const { getIdToken } = useAuth();
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const [userGenerating, setUserGenerating] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [dietaryPreference, setDietaryPreference] = useState("None");
+  const [allergies, setAllergies] = useState("");
+  const [conditions, setConditions] = useState("");
+  const [currentMedications, setCurrentMedications] = useState("");
+  const [emergencyName, setEmergencyName] = useState("");
+  const [emergencyPhone, setEmergencyPhone] = useState("");
+  const [bloodType, setBloodType] = useState("");
+  const [primaryDoctor, setPrimaryDoctor] = useState("");
+
   const handleSelectPreset = (persona: Persona) => {
     setSelected(persona);
-    setStep("confirm");
+    setStep("details");
   };
 
   const handleGenerateAvatar = async () => {
     if (!customDescription.trim()) return;
     setGenerating(true);
-    // Placeholder: In production this calls the backend /api/character/generate endpoint
-    // For now, simulate a delay and use a placeholder
-    await new Promise((r) => setTimeout(r, 2000));
-    // TODO: Replace with actual Gemini image generation via backend
-    setCustomAvatar("/placeholder.svg");
-    setGenerating(false);
+    try {
+      const formData = new FormData();
+      formData.append("companion_name", customName || "My Companion");
+      formData.append("avatar_description", customDescription);
+
+      const res = await generateAvatar(formData);
+      setCustomAvatar(res.avatar_b64);
+    } catch (e) {
+      console.error("Failed to generate avatar", e);
+      // fallback
+      if (!customAvatar) {
+        setCustomAvatar("/placeholder.svg");
+      }
+    } finally {
+      setGenerating(false);
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => setCustomAvatar(reader.result as string);
-    reader.readAsDataURL(file);
+
+    setGenerating(true);
+    try {
+      const formData = new FormData();
+      formData.append("companion_name", customName || "My Companion");
+      // Use description if provided, otherwise default to the tech wear prompt
+      formData.append("avatar_description", customDescription || "Wearing casual tech wear in navy blue");
+      formData.append("photo", file);
+
+      const res = await generateAvatar(formData);
+      setCustomAvatar(res.avatar_b64);
+    } catch (error) {
+      console.error("Failed to generate avatar from photo", error);
+      // Fallback: just show the uploaded photo locally if generation fails
+      const reader = new FileReader();
+      reader.onload = () => setCustomAvatar(reader.result as string);
+      reader.readAsDataURL(file);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleUserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+
+    setUserGenerating(true);
+    try {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_DIM = 400;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          }
+        } else {
+          if (height > MAX_DIM) {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        setUserAvatar(dataUrl);
+        setUserGenerating(false);
+      };
+      img.onerror = () => {
+        console.error("Failed to read user photo");
+        setUserGenerating(false);
+      };
+      img.src = URL.createObjectURL(file);
+    } catch (error) {
+      console.error("Failed to process user photo", error);
+      setUserGenerating(false);
+    }
   };
 
   const handleCustomConfirm = () => {
@@ -54,11 +143,40 @@ const Onboarding = () => {
       description: customDescription,
     };
     setSelected(persona);
+    setStep("details");
+  };
+
+  const handleDetailsConfirm = () => {
     setStep("confirm");
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     if (!selected) return;
+
+    // Save to Firestore via API
+    try {
+      const token = await getIdToken();
+      if (token) {
+        await saveProfile({
+          display_name: displayName,
+          allergies: allergies,
+          conditions: conditions,
+          dietary_preference: dietaryPreference,
+          current_medications: currentMedications,
+          emergency_contact_name: emergencyName,
+          emergency_contact_phone: emergencyPhone,
+          blood_type: bloodType,
+          primary_doctor: primaryDoctor,
+          companion_name: selected.name,
+          language: selected.language,
+          avatar_b64: selected.id === "custom" ? customAvatar : undefined,
+          user_avatar_b64: userAvatar || undefined
+        }, token);
+      }
+    } catch (e) {
+      console.error("Failed to save profile during onboarding", e);
+    }
+
     saveOnboardingState({
       persona: selected,
       customAvatar: selected.id === "custom" ? customAvatar || undefined : undefined,
@@ -252,25 +370,211 @@ const Onboarding = () => {
                 )}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 mt-6">
                 <button
                   onClick={handleGenerateAvatar}
-                  disabled={!customDescription.trim() || generating}
-                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-2.5 font-mono text-xs uppercase tracking-widest text-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                  disabled={generating}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-2.5 font-mono text-xs uppercase tracking-widest text-foreground transition-colors hover:bg-secondary disabled:opacity-40 shadow-sm"
                 >
                   {generating ? (
                     <Loader2 size={14} className="animate-spin" />
                   ) : (
-                    <Wand2 size={14} />
+                    <Sparkles size={14} className="text-primary" />
                   )}
                   {generating ? "Generating…" : "AI Generate"}
                 </button>
                 <button
                   onClick={handleCustomConfirm}
                   disabled={!customName.trim()}
-                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 font-mono text-xs uppercase tracking-widest text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 font-mono text-xs uppercase tracking-widest text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40 shadow-sm"
                 >
                   Continue <ArrowRight size={14} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Step: Patient Details */}
+        {step === "details" && (
+          <motion.div
+            key="details"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="w-full max-w-lg"
+          >
+            <button
+              onClick={() => setStep(selected?.id === "custom" ? "custom" : "select")}
+              className="mb-6 inline-flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft size={14} /> Back
+            </button>
+            <h2 className="font-display text-3xl font-bold tracking-tight">
+              A bit about <em className="text-primary">you</em>
+            </h2>
+            <p className="mt-2 mb-8 text-muted-foreground">
+              So {selected?.name} knows how to assist you and safely suggest recipes.
+            </p>
+
+            <div className="space-y-4">
+              <div className="flex flex-col items-center justify-center mb-6">
+                <div className="relative flex h-24 w-24 items-center justify-center rounded-full bg-primary/10 overflow-hidden mb-3">
+                  {userAvatar ? (
+                    <img src={userAvatar.startsWith('data:') ? userAvatar : `data:image/jpeg;base64,${userAvatar}`} alt="Your Profile" className="h-full w-full object-cover" />
+                  ) : (
+                    <User size={32} className="text-primary/50" />
+                  )}
+                  {userGenerating && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm">
+                      <Loader2 className="animate-spin text-primary" size={24} />
+                    </div>
+                  )}
+                </div>
+                <label className="cursor-pointer rounded-md border border-border bg-card px-4 py-2 text-xs font-mono uppercase tracking-widest transition-colors hover:bg-secondary">
+                  <span>{userGenerating ? "Uploading..." : "Upload Your Photo"}</span>
+                  <input
+                    type="file"
+                    className="sr-only"
+                    accept="image/*"
+                    onChange={handleUserFileUpload}
+                    disabled={userGenerating}
+                  />
+                </label>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Your Full Name
+                </label>
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="e.g., Amma Patel"
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Dietary Preference
+                </label>
+                <select
+                  value={dietaryPreference}
+                  onChange={(e) => setDietaryPreference(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                >
+                  <option value="None">None</option>
+                  <option value="Vegetarian">Vegetarian</option>
+                  <option value="Vegan">Vegan</option>
+                  <option value="Pescatarian">Pescatarian</option>
+                  <option value="Keto">Keto</option>
+                  <option value="Low Sodium">Low Sodium</option>
+                  <option value="Diabetic / Low Glycemic">Diabetic / Low Glycemic</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Food Allergies
+                </label>
+                <input
+                  type="text"
+                  value={allergies}
+                  onChange={(e) => setAllergies(e.target.value)}
+                  placeholder="e.g., Peanuts, Shellfish, Gluten (comma separated)"
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">Leave blank if none.</p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Current Medications (Optional)
+                </label>
+                <textarea
+                  value={currentMedications}
+                  onChange={(e) => setCurrentMedications(e.target.value)}
+                  placeholder="e.g., Lisinopril 10mg, Metformin"
+                  rows={2}
+                  className="w-full resize-none rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Conditions
+                </label>
+                <input
+                  type="text"
+                  value={conditions}
+                  onChange={(e) => setConditions(e.target.value)}
+                  placeholder="e.g., Hypertension, Asthma"
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Blood Type
+                </label>
+                <input
+                  type="text"
+                  value={bloodType}
+                  onChange={(e) => setBloodType(e.target.value)}
+                  placeholder="e.g., O+, A-"
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                    Emergency Contact Name
+                  </label>
+                  <input
+                    type="text"
+                    value={emergencyName}
+                    onChange={(e) => setEmergencyName(e.target.value)}
+                    placeholder="e.g., Jane Doe"
+                    className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                    Emergency Contact Phone
+                  </label>
+                  <input
+                    type="text"
+                    value={emergencyPhone}
+                    onChange={(e) => setEmergencyPhone(e.target.value)}
+                    placeholder="e.g., 555-123-4567"
+                    className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                  Primary Doctor
+                </label>
+                <input
+                  type="text"
+                  value={primaryDoctor}
+                  onChange={(e) => setPrimaryDoctor(e.target.value)}
+                  placeholder="e.g., Dr. Smith"
+                  className="w-full rounded-md border border-border bg-background px-4 py-2.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div className="pt-4">
+                <button
+                  onClick={handleDetailsConfirm}
+                  disabled={!displayName.trim()}
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 font-mono text-sm uppercase tracking-widest text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+                >
+                  Confirm Profile <ArrowRight size={16} />
                 </button>
               </div>
             </div>
@@ -306,10 +610,10 @@ const Onboarding = () => {
 
             <div className="mt-8 flex items-center justify-center gap-3">
               <button
-                onClick={() => setStep("select")}
+                onClick={() => setStep("details")}
                 className="inline-flex items-center gap-1 rounded-md border border-border px-6 py-2.5 font-mono text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               >
-                <ArrowLeft size={14} /> Change
+                <ArrowLeft size={14} /> Back
               </button>
               <button
                 onClick={handleFinish}

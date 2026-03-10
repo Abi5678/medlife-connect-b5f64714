@@ -1,16 +1,129 @@
-import { User, Globe, Bell, Shield, Edit2, Heart, RotateCcw } from "lucide-react";
+import { User, Globe, Bell, Shield, Edit2, Heart, RotateCcw, X, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { clearOnboarding, getOnboardingState } from "@/lib/personas";
+import { getProfile, saveProfile } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Profile = () => {
   const navigate = useNavigate();
   const onboarding = getOnboardingState();
+  const { getIdToken } = useAuth();
+
+  const [profile, setProfile] = useState<Record<string, any> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Form state
+  const [editForm, setEditForm] = useState<Record<string, any>>({});
+  const [saving, setSaving] = useState(false);
+  const [customAvatar, setCustomAvatar] = useState<string | null>(null);
+  const [customAvatarRawFile, setCustomAvatarRawFile] = useState<File | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadProfile = async () => {
+    try {
+      const token = await getIdToken();
+      if (!token) return;
+      const data = await getProfile(token) as Record<string, any>;
+      setProfile(data);
+      setEditForm(data || {});
+      if (data?.user_avatar_b64) {
+        setCustomAvatar(data.user_avatar_b64);
+      }
+    } catch (e) {
+      console.error("Failed to load profile", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const token = await getIdToken();
+      if (token) {
+        const payload = { ...editForm };
+        if (customAvatar) {
+          payload.user_avatar_b64 = customAvatar;
+        }
+        await saveProfile(payload, token);
+        setProfile(payload);
+        setIsEditing(false);
+      }
+    } catch (e) {
+      console.error("Failed to save profile", e);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleResetOnboarding = () => {
     clearOnboarding();
     navigate("/onboarding");
   };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+
+    setGenerating(true);
+    try {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_DIM = 400;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          }
+        } else {
+          if (height > MAX_DIM) {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        setCustomAvatar(dataUrl);
+        setGenerating(false);
+      };
+      img.onerror = () => {
+        console.error("Failed to read user photo inside Profile");
+        setGenerating(false);
+      };
+      img.src = URL.createObjectURL(file);
+    } catch (error) {
+      console.error("Failed to process user photo inside Profile", error);
+      setGenerating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <AppLayout>
+        <div className="flex h-64 items-center justify-center">
+          <Loader2 className="animate-spin text-primary" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -26,23 +139,29 @@ const Profile = () => {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Profile card */}
-        <div className="rounded-lg bg-primary p-8 text-center text-primary-foreground">
-          <div className="relative mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-primary-foreground/20">
-            <span className="font-display text-3xl font-bold">AP</span>
-            <button className="absolute -right-1 -bottom-1 flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground text-primary shadow-md">
+        <div className="rounded-lg bg-primary p-8 text-center text-primary-foreground relative">
+          <div className="relative mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-primary-foreground/20 text-3xl font-bold uppercase overflow-hidden">
+            {profile?.user_avatar_b64 ? (
+              <img src={profile.user_avatar_b64.startsWith('data:') ? profile.user_avatar_b64 : `data:image/jpeg;base64,${profile.user_avatar_b64}`} alt="Avatar" className="h-full w-full object-cover" />
+            ) : (
+              <span className="font-display">
+                {profile?.display_name ? profile.display_name.slice(0, 2) : "ME"}
+              </span>
+            )}
+            <button
+              onClick={() => setIsEditing(true)}
+              className="absolute -right-1 -bottom-1 flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground text-primary shadow-md z-10 hover:bg-white transition-colors"
+            >
               <Edit2 size={12} strokeWidth={1.5} />
             </button>
           </div>
-          <h2 className="font-display text-2xl font-bold">Amma Patel</h2>
+          <h2 className="font-display text-2xl font-bold">{profile?.display_name || "New Patient"}</h2>
           <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-70">
-            Patient · Age 72
+            {profile?.dietary_preference || "No Diet Selected"}
           </p>
           <div className="mt-4 flex justify-center gap-2">
             <span className="rounded-full bg-primary-foreground/20 px-3 py-1 font-mono text-xs uppercase tracking-widest">
-              Hindi
-            </span>
-            <span className="rounded-full border border-primary-foreground/30 px-3 py-1 font-mono text-xs uppercase tracking-widest opacity-70">
-              English
+              {profile?.language || "English"}
             </span>
           </div>
         </div>
@@ -52,12 +171,13 @@ const Profile = () => {
           <h2 className="mb-6 font-display text-2xl font-bold tracking-tight">Health Information</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {[
-              { icon: Heart, label: "Conditions", value: "Type 2 Diabetes, Hypertension" },
-              { icon: Globe, label: "Primary Language", value: "Hindi" },
-              { icon: User, label: "Emergency Contact", value: "Priya Patel (Daughter)" },
-              { icon: Shield, label: "Blood Type", value: "A+" },
-              { icon: Bell, label: "Reminder Preference", value: "Voice + Push" },
-              { icon: User, label: "Primary Doctor", value: "Dr. Sharma (Cardiology)" },
+              { icon: Heart, label: "Conditions", value: profile?.conditions || "None recorded" },
+              { icon: Heart, label: "Allergies", value: profile?.allergies || "None" },
+              { icon: Globe, label: "Primary Language", value: profile?.language || "English" },
+              { icon: User, label: "Emergency Contact", value: profile?.emergency_contact_name ? `${profile.emergency_contact_name} (${profile.emergency_contact_phone})` : "Not set" },
+              { icon: Shield, label: "Blood Type", value: profile?.blood_type || "Unknown" },
+              { icon: Bell, label: "Reminder Preference", value: profile?.reminder_meds_enabled ? "Enabled" : "Disabled" },
+              { icon: User, label: "Primary Doctor", value: profile?.primary_doctor || "Not set" },
             ].map((item, i) => (
               <div
                 key={i}
@@ -74,12 +194,12 @@ const Profile = () => {
             ))}
           </div>
 
-          <div className="mt-8 flex gap-3">
-            <button className="rounded-md bg-primary px-8 py-3 font-mono text-sm uppercase tracking-widest text-primary-foreground shadow-md transition-all hover:shadow-lg">
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button
+              onClick={() => setIsEditing(true)}
+              className="rounded-md bg-primary px-8 py-3 font-mono text-sm uppercase tracking-widest text-primary-foreground shadow-md transition-all hover:shadow-lg"
+            >
               Edit Profile →
-            </button>
-            <button className="rounded-md border-2 border-border px-6 py-3 font-mono text-sm uppercase tracking-widest transition-colors hover:bg-secondary">
-              Settings
             </button>
             <button
               onClick={handleResetOnboarding}
@@ -104,6 +224,156 @@ const Profile = () => {
           )}
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {isEditing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card p-6 shadow-xl relative">
+            <button
+              onClick={() => setIsEditing(false)}
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-secondary text-muted-foreground"
+            >
+              <X size={20} />
+            </button>
+            <h2 className="font-display text-2xl font-bold mb-6">Edit Profile</h2>
+
+            <div className="mb-6 flex flex-col items-center justify-center space-y-4 rounded-lg border-2 border-dashed border-border p-6 text-center">
+              <div className="relative mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-primary/10 overflow-hidden">
+                {customAvatar ? (
+                  <img src={customAvatar.startsWith('data:') ? customAvatar : `data:image/jpeg;base64,${customAvatar}`} alt="New Profile Photo" className="h-full w-full object-cover" />
+                ) : profile?.user_avatar_b64 ? (
+                  <img src={profile.user_avatar_b64.startsWith('data:') ? profile.user_avatar_b64 : `data:image/jpeg;base64,${profile.user_avatar_b64}`} alt="Current Profile Photo" className="h-full w-full object-cover" />
+                ) : (
+                  <User size={32} className="text-primary/50" />
+                )}
+                {generating && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm">
+                    <Loader2 className="animate-spin text-primary" size={24} />
+                  </div>
+                )}
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Change your Profile Photo</p>
+                <p className="mt-1 text-xs text-muted-foreground">Upload a photo to display on your profile.</p>
+              </div>
+              <label className="relative cursor-pointer rounded-md bg-secondary px-4 py-2 text-sm font-semibold transition-colors hover:bg-secondary/80">
+                <span>{generating ? "Uploading Photo..." : "Upload Photo"}</span>
+                <input
+                  type="file"
+                  className="sr-only"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  disabled={generating}
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Full Name</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.display_name || ""}
+                  onChange={e => setEditForm({ ...editForm, display_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Blood Type</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.blood_type || ""}
+                  onChange={e => setEditForm({ ...editForm, blood_type: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Dietary Preference</label>
+                <select
+                  value={editForm.dietary_preference || "None"}
+                  onChange={e => setEditForm({ ...editForm, dietary_preference: e.target.value })}
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                >
+                  <option value="None">None</option>
+                  <option value="Vegetarian">Vegetarian</option>
+                  <option value="Vegan">Vegan</option>
+                  <option value="Pescatarian">Pescatarian</option>
+                  <option value="Keto">Keto</option>
+                  <option value="Low Sodium">Low Sodium</option>
+                  <option value="Diabetic / Low Glycemic">Diabetic / Low Glycemic</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Allergies (comma separated)</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.allergies || ""}
+                  onChange={e => setEditForm({ ...editForm, allergies: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Conditions</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.conditions || ""}
+                  onChange={e => setEditForm({ ...editForm, conditions: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Current Medications</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.current_medications || ""}
+                  onChange={e => setEditForm({ ...editForm, current_medications: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Emergency Contact Name</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.emergency_contact_name || ""}
+                  onChange={e => setEditForm({ ...editForm, emergency_contact_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Emergency Contact Phone</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.emergency_contact_phone || ""}
+                  onChange={e => setEditForm({ ...editForm, emergency_contact_phone: e.target.value })}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="text-xs font-mono uppercase text-muted-foreground">Primary Doctor</label>
+                <input
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.primary_doctor || ""}
+                  onChange={e => setEditForm({ ...editForm, primary_doctor: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="mt-8 flex justify-end gap-3">
+              <button
+                onClick={() => setIsEditing(false)}
+                className="px-6 py-2 rounded-md border border-border text-sm font-mono uppercase tracking-widest hover:bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-6 py-2 rounded-md bg-primary text-primary-foreground text-sm font-mono uppercase tracking-widest hover:bg-primary/90 flex items-center gap-2"
+              >
+                {saving && <Loader2 size={14} className="animate-spin" />}
+                Save Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 };

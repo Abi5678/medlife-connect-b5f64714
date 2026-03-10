@@ -24,7 +24,7 @@ const navItems = [
   { to: "/pills", icon: Pill, label: "Pill Check" },
   { to: "/food", icon: Camera, label: "Food Log" },
   { to: "/exercise", icon: Dumbbell, label: "Exercise" },
-  { to: "/prescriptions", icon: FileText, label: "Prescriptions" },
+  { to: "/prescriptions", icon: FileText, label: "Reports & Rx" },
   { to: "/booking", icon: CalendarCheck, label: "Book Doctor" },
   { to: "/family", icon: Users, label: "Family" },
   { to: "/profile", icon: User, label: "Profile" },

@@ -26,9 +26,21 @@ def _get_gemini_client() -> genai.Client:
     """Gemini client using API key (for image generation with photo input)."""
     global _gemini_client
     if _gemini_client is None:
-        _gemini_client = genai.Client(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-        )
+        proj = os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
+        loc = os.environ.pop("GOOGLE_CLOUD_LOCATION", None)
+        use_vertex = os.environ.pop("GOOGLE_GENAI_USE_VERTEXAI", None)
+        try:
+            _gemini_client = genai.Client(
+                api_key=os.getenv("GOOGLE_API_KEY"),
+                http_options={'api_version': 'v1alpha'}
+            )
+        finally:
+            if proj is not None:
+                os.environ["GOOGLE_CLOUD_PROJECT"] = proj
+            if loc is not None:
+                os.environ["GOOGLE_CLOUD_LOCATION"] = loc
+            if use_vertex is not None:
+                os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = use_vertex
     return _gemini_client
 
 
@@ -54,24 +66,24 @@ UPLOAD_PHOTO_PROMPT_TEMPLATE = """PRESERVE from the original photo:
 - Any distinctive features (glasses, facial hair, etc.)
 
 TRANSFORM with this style:
-- Hand-drawn digital illustration style, clean sketchy lines, vibrant colors
-- Add attire based on this description: {avatar_description}
-- Background: Pure solid white (#FFFFFF) - absolutely no gradients, shadows, or other elements in the background. The background MUST be pure white (#FFFFFF).
+- Digital illustration style, clean lines, vibrant saturated colors
+- Add a Casual Genz wear attire, Tech Wear
+- Suit color: BLUE
+- Background: Pure solid white (#FFFFFF) - no gradients or elements
 - Frame: Head and shoulders, 3/4 view
-- Lighting: Soft even lighting
-- Art style: 2D hand-drawn character illustration (webcomic/storybook aesthetic)
+- Lighting: Soft diffused studio lighting
+- Art style: Modern animated movie character (Pixar/Dreamworks aesthetic)
 
-CRITICAL INSTRUCTION: DO NOT include any text, words, UI elements, or prompt descriptions in the image. The image must ONLY contain the character artwork.
-
-The result should be clearly recognizable as THIS specific person, but illustrated as a casual character."""
+The result should be clearly recognizable as THIS specific person, but illustrated as a casual happy genz tech worker.
+CRITICAL INSTRUCTION: DO NOT include any text, words, UI elements, or prompt descriptions in the image. The image must ONLY contain the character artwork."""
 
 RANDOM_AVATAR_PROMPT_TEMPLATE = (
     "A friendly {companion_name} character. {avatar_description}. "
-    "Art style: 2D hand-drawn digital illustration, clean sketchy lines, "
-    "vibrant saturated colors. Head and shoulders, 3/4 view, warm caring smile, "
-    "soft even lighting. purely solid white (#FFFFFF) background — absolutely no "
+    "Art style: Modern animated movie character (Pixar/Dreamworks aesthetic), "
+    "clean lines, vibrant saturated colors. Head and shoulders, 3/4 view, warm caring smile, "
+    "soft diffused studio lighting. purely solid white (#FFFFFF) background — absolutely no "
     "gradients, shadows, or background elements. "
-    "Professional 2D character render, adult, NOT a child. "
+    "Attire: Casual Genz tech wear, suit color BLUE. "
     "CRITICAL INSTRUCTION: DO NOT include any text, words, UI elements, or prompt descriptions in the image. The image must ONLY contain the character artwork."
 )
 

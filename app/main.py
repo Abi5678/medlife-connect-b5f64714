@@ -215,10 +215,17 @@ async def get_profile(authorization: str = Header(default=None)):
         raise HTTPException(status_code=503, detail="Firestore unavailable")
 
     profile = await fs.get_or_create_profile(uid)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Profile not found (first-time user)")
+    health = await fs.get_health_restrictions(uid)
 
-    return JSONResponse(profile)
+    response_data = profile or {}
+    
+    if health:
+        # Flatten health into profile response for easier frontend pairing
+        response_data["allergies"] = ", ".join(health.get("allergies", []))
+        response_data["dietary_preference"] = health.get("diet_type", "")
+        response_data["current_medications"] = health.get("current_medications", "")
+
+    return JSONResponse(response_data)
 
 
 @app.post("/api/auth/profile")
@@ -237,7 +244,10 @@ async def save_profile(
         raise HTTPException(status_code=503, detail="Firestore unavailable")
 
     # Only allow safe profile fields (block internal Firestore fields)
-    allowed_profile = {"language", "companion_name", "avatar_b64", "family_link_code", "display_name", "voice_name"}
+    allowed_profile = {
+        "language", "companion_name", "avatar_b64", "user_avatar_b64", "family_link_code", "display_name", "voice_name",
+        "blood_type", "emergency_contact_name", "emergency_contact_phone", "primary_doctor", "conditions"
+    }
     filtered_profile = {k: v for k, v in body.items() if k in allowed_profile}
 
     if filtered_profile:

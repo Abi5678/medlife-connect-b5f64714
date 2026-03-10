@@ -152,6 +152,75 @@ REPORT_SCHEMA = genai_types.Schema(
 )
 
 # ---------------------------------------------------------------------------
+# AI summary generation
+# ---------------------------------------------------------------------------
+
+
+async def generate_summary(extracted: dict, scan_type: str) -> dict:
+    """Generate a 2-sentence patient-friendly summary + 3–5 key insights."""
+    client = _get_genai_client()
+
+    if scan_type == "prescription":
+        meds = extracted.get("medications", [])
+        med_lines = "\n".join(
+            f"- {m['name']} {m.get('dosage', '')} {m.get('frequency', '')} "
+            f"(class: {m.get('drug_class', 'unknown')})"
+            for m in meds
+        )
+        interactions = extracted.get("drug_interactions", [])
+        ix_lines = "\n".join(
+            f"- {i.get('drug1', '?')} + {i.get('drug2', '?')}: {i.get('description', '')}"
+            for i in interactions
+            if i.get("severity") not in ("none", "")
+        )
+        prompt = (
+            f"Prescription scanned.\n"
+            f"Doctor: {extracted.get('doctor_name', 'unknown')}\n"
+            f"Date: {extracted.get('date', 'unknown')}\n"
+            f"Medications:\n{med_lines or 'None'}\n"
+            f"Interactions:\n{ix_lines or 'None flagged'}\n\n"
+            f"Write a 2-sentence patient-friendly summary, then 3–5 key insights "
+            f"(what to watch for, side effects, interaction risks, food restrictions, timing tips). "
+            f'Reply as JSON: {{"summary": "...", "insights": ["...", ...]}}'
+        )
+    else:
+        tests = extracted.get("tests", [])
+        abnormal = [t for t in tests if t.get("status") in ("high", "low")]
+        normal_count = sum(1 for t in tests if t.get("status") == "normal")
+        ab_lines = "\n".join(
+            f"- {t['name']}: {t['value']} {t.get('unit', '')} [{t['status'].upper()}] "
+            f"(range: {t.get('reference_range', '')})"
+            for t in abnormal
+        ) or "All within range"
+        prompt = (
+            f"Lab report scanned.\n"
+            f"Lab: {extracted.get('lab_name', 'unknown')}\n"
+            f"Date: {extracted.get('date', 'unknown')}\n"
+            f"Tests: {len(tests)} total, {normal_count} normal, {len(abnormal)} abnormal\n"
+            f"Abnormal:\n{ab_lines}\n\n"
+            f"Write a 2-sentence patient-friendly summary, then 3–5 key insights "
+            f"(which values need attention, what they might indicate, when to see a doctor). "
+            f'Reply as JSON: {{"summary": "...", "insights": ["...", ...]}}'
+        )
+
+    try:
+        resp = client.models.generate_content(
+            model=ANALYSIS_MODEL,
+            contents=[genai_types.Part.from_text(text=prompt)],
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.3,
+            ),
+        )
+        import json as _json
+        result = _json.loads(resp.text)
+        return {"summary": result.get("summary", ""), "insights": result.get("insights", [])}
+    except Exception as exc:
+        logger.warning("Summary generation failed (non-blocking): %s", exc)
+        return {"summary": "", "insights": []}
+
+
+# ---------------------------------------------------------------------------
 # Request model
 # ---------------------------------------------------------------------------
 
@@ -265,6 +334,11 @@ async def scan_document(
                     extracted["cross_medication_interactions"] = cross_result.get("interactions", [])
         except Exception as exc:
             logger.warning("Drug enrichment failed (non-blocking): %s", exc)
+
+    # AI narrative summary + key insights
+    ai = await generate_summary(extracted, body.scan_type)
+    extracted["summary"] = ai["summary"]
+    extracted["insights"] = ai["insights"]
 
     # Store in Firestore
     fs = FirestoreService.get_instance()

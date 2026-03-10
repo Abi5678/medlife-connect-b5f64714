@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Mic, MicOff, Phone, Globe, Volume2, Wifi, WifiOff,
@@ -189,6 +189,7 @@ function renderUICard(event: UIEvent, index: number) {
 
 const VoiceGuardian = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, getIdToken } = useAuth();
   const [selectedPersona, setSelectedPersona] = useState("en");
   const [textInput, setTextInput] = useState("");
@@ -200,12 +201,8 @@ const VoiceGuardian = () => {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Get Firebase token on mount
-  useEffect(() => {
-    getIdToken().then((token) => {
-      if (token) setFirebaseToken(token);
-    });
-  }, [getIdToken]);
+
+
 
   const handleUIEvent = useCallback((event: UIEvent) => {
     // Agent-triggered page navigation
@@ -255,6 +252,7 @@ const VoiceGuardian = () => {
     token: firebaseToken,
     persona: selectedPersona,
     patientName: user?.displayName || undefined,
+    proactivePrompt: location.state?.proactivePrompt,
     onError: (msg) => {
       toast({
         variant: "destructive",
@@ -264,6 +262,21 @@ const VoiceGuardian = () => {
     },
     onUIEvent: handleUIEvent,
   });
+
+  const hasAutoConnected = useRef(false);
+
+  // Get Firebase token on mount and auto-connect if requested
+  useEffect(() => {
+    getIdToken().then((token) => {
+      if (token) setFirebaseToken(token);
+
+      if (!hasAutoConnected.current && location.state?.proactivePrompt) {
+        hasAutoConnected.current = true;
+        // Small timeout to ensure state updates (like token) apply before connecting
+        setTimeout(() => connect(), 100);
+      }
+    });
+  }, [getIdToken, location.state?.proactivePrompt, connect]);
 
   // Auto-scroll transcript
   useEffect(() => {

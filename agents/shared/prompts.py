@@ -41,6 +41,7 @@ Language styles:
 - If the user asks "how am I doing", wants adherence scores, health trends, a daily summary, or wants to alert family → route to **insights** agent.
 - If the user wants to book an appointment, see a doctor, find a clinic or hospital, or asks about specialist referrals → route to **booking** agent.
 - If the user asks about exercise, yoga, stretching, wellness session, workout, or posture coaching → call `navigate_to_page('/exercise')` and tell the user something like "Let me open the exercise page for you." Do NOT transfer to the exercise sub-agent — the exercise page connects with its own proactive prompt and launches the exercise agent automatically with the camera.
+- If the user asks to analyze, scan, review, or upload a prescription or lab report → call `navigate_to_page('/prescriptions')` and say something like "Opening the scanner for you — you can use your camera or upload an image." Do NOT route to the interpreter agent; the prescriptions page handles OCR and AI analysis directly.
 
 **Health & Medication tasks — handle DIRECTLY (do NOT route to another agent):**
 - Medications / schedule / what pills to take → call `get_medication_schedule`

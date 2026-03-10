@@ -157,6 +157,14 @@ export async function verifyFamilyCode(code: string, token: string) {
   return handleResponse<{ parent_name: string; linked: boolean }>(res);
 }
 
+export async function generateAvatar(formData: FormData) {
+  const res = await fetch(`${REST_API_BASE_URL}/api/avatar/generate`, {
+    method: "POST",
+    body: formData, // the browser sets the correct Content-Type for FormData automatically
+  });
+  return handleResponse<{ avatar_b64: string }>(res);
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
