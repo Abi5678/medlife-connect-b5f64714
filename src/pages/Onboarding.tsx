@@ -9,6 +9,18 @@ import { useAuth } from "@/contexts/AuthContext";
 
 type Step = "welcome" | "select" | "custom" | "details" | "confirm";
 
+/** Convert image URL (e.g. bundled asset) to data URL for Firestore. */
+async function imageUrlToBase64(url: string): Promise<string> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 const Onboarding = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("welcome");
@@ -153,6 +165,16 @@ const Onboarding = () => {
   const handleFinish = async () => {
     if (!selected) return;
 
+    // For preset personas, convert avatar URL to base64 so Firestore has it (fixes stale avatar in Voice Guardian)
+    let presetAvatarB64: string | undefined;
+    if (selected.id !== "custom" && selected.avatar) {
+      try {
+        presetAvatarB64 = await imageUrlToBase64(selected.avatar);
+      } catch (e) {
+        console.warn("Failed to convert preset avatar to base64:", e);
+      }
+    }
+
     // Save to Firestore via API
     try {
       const token = await getIdToken();
@@ -169,7 +191,7 @@ const Onboarding = () => {
           primary_doctor: primaryDoctor,
           companion_name: selected.name,
           language: selected.language,
-          avatar_b64: selected.id === "custom" ? customAvatar : undefined,
+          avatar_b64: selected.id === "custom" ? customAvatar : presetAvatarB64,
           user_avatar_b64: userAvatar || undefined
         }, token);
       }
@@ -237,7 +259,7 @@ const Onboarding = () => {
               Choose your <em className="text-primary">companion</em>
             </h2>
             <p className="mt-2 mb-8 text-muted-foreground">
-              Pick a preset persona or create your own custom companion.
+              Pick a persona or create your own custom companion.
             </p>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

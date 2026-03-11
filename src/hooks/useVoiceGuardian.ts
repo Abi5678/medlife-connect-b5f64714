@@ -28,6 +28,9 @@ interface UseVoiceGuardianOptions {
    *  Used by dedicated pages (e.g. Exercise) to bypass the root-agent greeting
    *  and route directly to the correct sub-agent on connection. */
   proactivePrompt?: string;
+  /** For Exercise page: when reconnecting, pass exercises completed so far (1–14).
+   *  Enables resume on reconnect without full session restart. */
+  exercisesCompleted?: number;
   onTranscript?: (msg: TranscriptMessage) => void;
   onUIEvent?: (event: UIEvent) => void;
   onStatusChange?: (status: ConnectionStatus) => void;
@@ -61,6 +64,7 @@ export function useVoiceGuardian(options: UseVoiceGuardianOptions = {}) {
     token = "demo",
     patientName,
     proactivePrompt,
+    exercisesCompleted,
     onTranscript,
     onUIEvent,
     onStatusChange,
@@ -290,10 +294,15 @@ export function useVoiceGuardian(options: UseVoiceGuardianOptions = {}) {
       // Backend sends: {"inputTranscription": {"text": "..."}}
       const inputTx = field<{ text?: string }>("input_transcription", "inputTranscription");
       if (inputTx?.text) {
-        // Filter out system/timer signals (e.g. "[TIMER_COMPLETE]: Box Breathing") that
-        // were sent via sendText({ silent: true }) — we don't want them appearing in the
-        // transcript even though Gemini transcribes the TTS audio back.
-        const isSystemSignal = inputTx.text.trim().startsWith("[");
+        // Filter out system/timer signals and coach-paused nudges that were sent via
+        // sendText({ silent: true }) — we don't want them appearing in the transcript
+        // even though Gemini transcribes the TTS audio back (often without brackets).
+        const t = inputTx.text.trim().toLowerCase();
+        const isSystemSignal =
+          inputTx.text.trim().startsWith("[") ||
+          t.includes("system:") ||
+          t.includes("coach paused") ||
+          t.includes("do not reintroduce");
         if (!isSystemSignal) {
           addTranscript({ role: "user", text: inputTx.text, timestamp: Date.now() });
         }
@@ -507,7 +516,8 @@ registerProcessor('pcm-processor', PCMProcessor);
   }, []);
 
   // Connect to WebSocket
-  const connect = useCallback(async () => {
+  // tokenOverride: use when token is resolved async (e.g. Exercise page) to avoid race with state
+  const connect = useCallback(async (tokenOverride?: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     updateStatus("connecting");
@@ -519,9 +529,13 @@ registerProcessor('pcm-processor', PCMProcessor);
       nextPlayTimeRef.current = 0;
     }
 
-    let wsUrl = `${VOICE_WS_BASE_URL}/ws/${encodeURIComponent(userId)}?token=${encodeURIComponent(token)}&persona=${encodeURIComponent(persona)}`;
+    const authToken = tokenOverride ?? token;
+    let wsUrl = `${VOICE_WS_BASE_URL}/ws/${encodeURIComponent(userId)}?token=${encodeURIComponent(authToken)}&persona=${encodeURIComponent(persona)}`;
     if (patientName) wsUrl += `&patient_name=${encodeURIComponent(patientName)}`;
     if (proactivePrompt) wsUrl += `&proactive_prompt=${encodeURIComponent(proactivePrompt)}`;
+    if (exercisesCompleted != null && exercisesCompleted > 0) {
+      wsUrl += `&exercises_completed=${exercisesCompleted}`;
+    }
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -554,7 +568,7 @@ registerProcessor('pcm-processor', PCMProcessor);
         updateStatus("disconnected");
       }
     };
-  }, [userId, token, persona, patientName, proactivePrompt, handleMessage, startMicrophone, stopMicrophone, updateStatus, onError]);
+  }, [userId, token, persona, patientName, proactivePrompt, exercisesCompleted, handleMessage, startMicrophone, stopMicrophone, updateStatus, onError]);
 
   // Disconnect
   const disconnect = useCallback(() => {

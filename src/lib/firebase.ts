@@ -2,12 +2,12 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAami7n01CmBp1EvwMaCzNSXsjlt5XvAoE",
-  authDomain: "medlive-488722.firebaseapp.com",
-  projectId: "medlive-488722",
-  storageBucket: "medlive-488722.firebasestorage.app",
-  messagingSenderId: "479757625763",
-  appId: "1:479757625763:web:61c5299bf510e2b3c3d216",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);

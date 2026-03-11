@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Play, Square, Camera, CameraOff, Timer, Trophy,
+  Play, Square, Camera, CameraOff, Trophy,
   Activity, Wind, MoveHorizontal, Dumbbell, Wifi, WifiOff,
 } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import { useVoiceGuardian } from "@/hooks/useVoiceGuardian";
 import { useAuth } from "@/contexts/AuthContext";
+import { getProfile } from "@/lib/api";
+import { LANGUAGE_PERSONAS } from "@/lib/voiceConfig";
 import { toast } from "@/hooks/use-toast";
 import { useUIEvent } from "@/hooks/useUIEventStore";
 import { pushUIEvent } from "@/hooks/useUIEventStore";
@@ -18,6 +20,23 @@ const PHASE_INFO = [
   { name: "Yoga", icon: Activity, color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/30" },
   { name: "Cool-Down", icon: Wind, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
 ];
+
+const EXERCISE_TO_PHASE: Record<string, string> = {
+  "Box Breathing": "Breathing",
+  "Deep Belly Breathing": "Breathing",
+  "Neck Rolls": "Stretches",
+  "Shoulder Shrugs": "Stretches",
+  "Seated Side Bend": "Stretches",
+  "Wrist & Ankle Circles": "Stretches",
+  "Mountain Pose": "Yoga",
+  "Tree Pose": "Yoga",
+  "Warrior I": "Yoga",
+  "Seated Cat-Cow": "Yoga",
+  "Child's Pose": "Yoga",
+  "Seated Forward Fold": "Cool-Down",
+  "Gentle Spinal Twist": "Cool-Down",
+  "Final Relaxation": "Cool-Down",
+};
 
 const TOTAL_EXERCISES = 14;
 
@@ -37,6 +56,8 @@ const Exercise = () => {
   const { user, getIdToken } = useAuth();
   const [sessionState, setSessionState] = useState<SessionState>("connecting");
   const [firebaseToken, setFirebaseToken] = useState<string>("demo");
+  const [persona, setPersona] = useState("en");
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [currentExercise, setCurrentExercise] = useState<string>("");
   const [exerciseNumber, setExerciseNumber] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<string>("Breathing");
@@ -46,15 +67,13 @@ const Exercise = () => {
 
   const [cameraActive, setCameraActive] = useState(false);
   const [exerciseCountdown, setExerciseCountdown] = useState<number | null>(null);
+  const [coachPaused, setCoachPaused] = useState(false);
+  const coachSilentSinceRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const exerciseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const exerciseNameRef = useRef<string>("");
-  // Becomes true when the exercise countdown reaches zero; cleared on next exercise.
-  const timerElapsedRef = useRef<boolean>(false);
-  // Polls every 200 ms waiting for timer elapsed + agent silence before firing the signal.
-  const waitForSpeechEndRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Set srcObject once the video element mounts (after cameraActive → true)
   useEffect(() => {
@@ -88,6 +107,8 @@ const Exercise = () => {
       setExerciseNumber(Number(data.exercise_number || 0));
       setCurrentPhase(String(data.phase || "Breathing"));
       setPostureNotes(String(data.posture_notes || ""));
+      setCoachPaused(false);
+      coachSilentSinceRef.current = null;
     }
   }, [poseChange]);
 
@@ -101,13 +122,7 @@ const Exercise = () => {
     }
   }, [sessionCompleted]);
 
-  // Frontend exercise countdown — starts when agent calls await_exercise_completion.
-  //
-  // WHY we wait for the agent to stop speaking before firing the signal:
-  // The backend converts sendText() to audio via macOS `say`, which Gemini receives as
-  // user speech. If this audio fires while the agent is mid-coaching, Gemini's VAD detects
-  // it as an interruption, which resets the agent's turn and can trigger a re-greeting.
-  // By waiting until isSpeakingRef.current === false, we avoid the barge-in.
+  // Frontend exercise countdown — Purely Visual
   useEffect(() => {
     if (!timerStarted) return;
     const data = (timerStarted.data ?? timerStarted) as Record<string, unknown>;
@@ -115,14 +130,16 @@ const Exercise = () => {
     const name = String(data.exercise_name || "exercise");
 
     exerciseNameRef.current = name;
-    timerElapsedRef.current = false;
+
+    // Sync Session Info
+    setCurrentExercise(name);
+    setCurrentPhase(EXERCISE_TO_PHASE[name] ?? "Breathing");
 
     // Clear any previous timers
     if (exerciseTimerRef.current) clearInterval(exerciseTimerRef.current);
-    if (waitForSpeechEndRef.current) clearInterval(waitForSpeechEndRef.current);
     setExerciseCountdown(duration);
 
-    // Phase 1: countdown timer (purely visual + sets timerElapsedRef when done)
+    // Purely visual countdown timer
     let remaining = duration;
     exerciseTimerRef.current = setInterval(() => {
       remaining -= 1;
@@ -131,27 +148,14 @@ const Exercise = () => {
         clearInterval(exerciseTimerRef.current!);
         exerciseTimerRef.current = null;
         setExerciseCountdown(null);
-        timerElapsedRef.current = true;
+        setCoachPaused(false);
+        coachSilentSinceRef.current = null;
       }
     }, 1000);
 
-    // Phase 2: once timer elapsed, wait for agent to stop speaking (max 10 s),
-    // then send a SHORT silent system signal so it doesn't appear in transcript
-    // and doesn't interrupt the agent's "...5...4...3...2...1...and release!" speech.
-    let waitedMs = 0;
-    const MAX_WAIT_MS = 10_000;
-    waitForSpeechEndRef.current = setInterval(() => {
-      if (!timerElapsedRef.current) return; // still counting down
-      waitedMs += 200;
-      if (!isSpeakingRef.current || waitedMs >= MAX_WAIT_MS) {
-        clearInterval(waitForSpeechEndRef.current!);
-        waitForSpeechEndRef.current = null;
-        // Brief bracketed signal — clearly a system token, not natural speech.
-        // { silent: true } prevents it from showing as a "YOU" bubble.
-        sendText(`[TIMER_COMPLETE]: ${exerciseNameRef.current}`, { silent: true });
-      }
-    }, 200);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      if (exerciseTimerRef.current) clearInterval(exerciseTimerRef.current);
+    };
   }, [timerStarted]);
 
   const handleUIEvent = useCallback((event: UIEvent) => {
@@ -172,34 +176,79 @@ const Exercise = () => {
   } = useVoiceGuardian({
     userId: user?.uid,
     token: firebaseToken,
-    persona: "en",
+    persona,
     patientName: user?.displayName || undefined,
     proactivePrompt: EXERCISE_PROACTIVE_PROMPT,
+    exercisesCompleted: exerciseNumber > 0 ? exerciseNumber : undefined,
     onError: (msg) => {
       toast({ variant: "destructive", title: "Exercise Coach", description: msg });
     },
     onUIEvent: handleUIEvent,
   });
 
-  // Auto-connect on page load and trigger exercise agent
+  // Fetch profile for language preference before connecting
   useEffect(() => {
-    if (hasAutoConnected.current) return;
+    let cancelled = false;
+    const loadProfile = async () => {
+      const token = await getIdToken();
+      if (token) setFirebaseToken(token);
+      if (token && token !== "demo") {
+        try {
+          const profile = (await getProfile(token)) as Record<string, unknown>;
+          if (!cancelled && profile?.language) {
+            const found = Object.values(LANGUAGE_PERSONAS).find((p) => p.label === profile.language);
+            if (found) setPersona(found.code);
+          }
+        } catch (e) {
+          if (!cancelled) console.error("Failed to fetch profile for Exercise persona:", e);
+        }
+      }
+      if (!cancelled) setProfileLoaded(true);
+    };
+    loadProfile();
+    return () => { cancelled = true; };
+  }, [getIdToken]);
+
+  // Auto-connect on page load after profile is loaded
+  useEffect(() => {
+    if (!profileLoaded || hasAutoConnected.current) return;
     hasAutoConnected.current = true;
 
     const autoConnect = async () => {
-      // Ensure token is resolved before connecting
       const token = await getIdToken();
-      if (token) setFirebaseToken(token);
-
-      await connect();
-      // The proactive prompt [WELLNESS_SESSION_START] already routes silently
-      // to the exercise agent on connect — no sendText needed here.
+      await connect(token ?? "demo");
       setSessionState("welcome");
     };
 
     autoConnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [profileLoaded]);
+
+  // Detect coach pause: silent for 12+ seconds during active exercise.
+  // 12s avoids triggering when coach is waiting for "Are you ready for the next one?" (user says "yes").
+  useEffect(() => {
+    if (sessionState !== "active" || exerciseCountdown === null) {
+      coachSilentSinceRef.current = null;
+      setCoachPaused(false);
+      return;
+    }
+    if (isSpeaking) {
+      coachSilentSinceRef.current = null;
+      setCoachPaused(false);
+      return;
+    }
+    if (coachSilentSinceRef.current === null) coachSilentSinceRef.current = Date.now();
+    const id = setInterval(() => {
+      if (isSpeakingRef.current) {
+        coachSilentSinceRef.current = null;
+        setCoachPaused(false);
+        return;
+      }
+      const elapsed = Date.now() - (coachSilentSinceRef.current ?? 0);
+      if (elapsed >= 12000) setCoachPaused(true);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isSpeaking, sessionState, exerciseCountdown]);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -280,15 +329,8 @@ const Exercise = () => {
       stopCamera();
       stopTimer();
       if (exerciseTimerRef.current) clearInterval(exerciseTimerRef.current);
-      if (waitForSpeechEndRef.current) clearInterval(waitForSpeechEndRef.current);
     };
   }, [stopCamera, stopTimer]);
-
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
 
   const progressPercent = Math.round((exerciseNumber / TOTAL_EXERCISES) * 100);
   const isConnected = status === "connected" || status === "ready";
@@ -344,21 +386,7 @@ const Exercise = () => {
                       </div>
                     )}
                   </div>
-                  <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
-                    <div className="rounded bg-black/60 px-3 py-1.5 font-mono text-lg font-bold text-white">
-                      {formatTime(elapsedSeconds)}
-                    </div>
-                    {exerciseCountdown !== null && (
-                      <motion.div
-                        key={exerciseCountdown}
-                        initial={{ scale: 1.15 }}
-                        animate={{ scale: 1 }}
-                        className={`rounded px-3 py-1 font-mono text-base font-bold ${exerciseCountdown <= 5 ? "bg-red-600/90 text-white" : "bg-emerald-600/80 text-white"}`}
-                      >
-                        {exerciseCountdown}s
-                      </motion.div>
-                    )}
-                  </div>
+                  {/* Timer displays removed per user request */}
                 </>
               ) : (
                 <div className="text-center">
@@ -417,6 +445,22 @@ const Exercise = () => {
                 </span>
               </div>
               <div className="flex gap-3">
+                {(status === "connecting" || status === "error") && (
+                  <button
+                    onClick={async () => {
+                      disconnect();
+                      hasAutoConnected.current = false;
+                      setSessionState("connecting");
+                      const token = await getIdToken();
+                      if (token) setFirebaseToken(token);
+                      await connect(token ?? "demo");
+                    }}
+                    className="flex items-center gap-2 rounded-md bg-primary px-6 py-2.5 font-mono text-sm uppercase tracking-widest text-primary-foreground shadow-md transition-all hover:bg-primary/90 hover:shadow-lg"
+                  >
+                    <Play size={16} strokeWidth={1.5} />
+                    Retry
+                  </button>
+                )}
                 {(sessionState === "active" || sessionState === "welcome") && (
                   <button
                     onClick={handleEndSession}
@@ -472,9 +516,9 @@ const Exercise = () => {
                 </div>
                 <div className="rounded-md bg-card p-4 text-center">
                   <p className="font-mono text-2xl font-bold text-emerald-400">
-                    {formatTime(elapsedSeconds)}
+                    {(completionData.duration_minutes as number | undefined) ?? "—"}
                   </p>
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Duration</p>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Minutes</p>
                 </div>
                 <div className="rounded-md bg-card p-4 text-center">
                   <p className="font-mono text-2xl font-bold text-emerald-400">
@@ -524,11 +568,26 @@ const Exercise = () => {
               </div>
             </div>
 
-            {/* Timer */}
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Timer size={14} strokeWidth={1.5} />
-              <span className="font-mono text-sm">{formatTime(elapsedSeconds)} / 10:00</span>
-            </div>
+            {/* Timer removed */}
+
+            {/* Coach paused — tap to nudge (or say "yes"/"ready" if waiting for confirmation) */}
+            {coachPaused && (
+              <motion.button
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => {
+                  sendText(
+                    "[SYSTEM: Coach paused. Resume immediately — continue counting the rhythm (e.g. In... 2... 3... 4...). Do NOT re-introduce the exercise. Do NOT say 'Let's start with' again.]",
+                    { silent: true }
+                  );
+                  setCoachPaused(false);
+                  coachSilentSinceRef.current = null;
+                }}
+                className="mt-4 w-full rounded-md border-2 border-dashed border-amber-500/50 bg-amber-500/10 py-3 font-mono text-xs uppercase tracking-widest text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+              >
+                Coach paused? Say &quot;yes&quot; or &quot;ready&quot; to continue — or tap to nudge
+              </motion.button>
+            )}
 
             {/* Posture notes */}
             {postureNotes && (
@@ -574,6 +633,11 @@ const Exercise = () => {
                   <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                     {sessionState === "connecting" ? "Connecting..." : "Waiting for coach..."}
                   </p>
+                  {(status === "error" || status === "connecting") && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Stuck? Ensure the backend is running, then tap <strong>Retry</strong> below.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <AnimatePresence>

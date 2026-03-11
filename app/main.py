@@ -45,6 +45,20 @@ from agents.shared.firestore_service import FirestoreService
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# #region agent log
+def _dbg_log(location: str, message: str, data: dict):
+    import time
+    payload = {"sessionId": "5959a7", "location": location, "message": message, "data": data, "timestamp": int(time.time() * 1000)}
+    logger.info("[DEBUG-5959a7] %s: %s %s", location, message, data)
+    try:
+        path = Path(__file__).resolve().parent.parent / ".cursor" / "debug-5959a7.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception as e:
+        logger.warning("[DEBUG-5959a7] Failed to write log file: %s", e)
+# #endregion
+
 # ---------------------------------------------------------------------------
 # Firebase Admin SDK (token verification for WebSocket + REST auth)
 # ---------------------------------------------------------------------------
@@ -78,6 +92,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:8080",
+        "http://localhost:8082",  # Vite dev server (vite.config.ts port)
         "http://localhost:3000",
     ],
     allow_credentials=True,
@@ -218,7 +233,19 @@ async def get_profile(authorization: str = Header(default=None)):
     health = await fs.get_health_restrictions(uid)
 
     response_data = profile or {}
-    
+
+    # Normalize profile for Profile UI: support both React onboarding (display_name, emergency_contact_*)
+    # and voice/agent onboarding (name, emergency_contact array)
+    if response_data:
+        response_data["display_name"] = response_data.get("display_name") or response_data.get("name")
+        ec = response_data.get("emergency_contact")
+        if isinstance(ec, list) and ec and not response_data.get("emergency_contact_name"):
+            response_data["emergency_contact_name"] = ec[0].get("name", "")
+            response_data["emergency_contact_phone"] = ec[0].get("phone", "")
+        elif not response_data.get("emergency_contact_name"):
+            response_data.setdefault("emergency_contact_name", "")
+            response_data.setdefault("emergency_contact_phone", "")
+
     if health:
         # Flatten health into profile response for easier frontend pairing
         response_data["allergies"] = ", ".join(health.get("allergies", []))
@@ -569,18 +596,35 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     session.state["live_request_queue"] = live_request_queue
 
     # --- Phase 2.1: Avatar Initialization ---
+    # Preset companion_name -> asset filename (in src/assets/)
+    PRESET_AVATAR_FILES = {
+        "Dr. Chen": "avatar-dr-chen.png",
+        "Dr. Priya": "avatar-dr-priya.png",
+        "Enfermera Elena": "avatar-elena.png",
+        "Nurse Maya": "avatar-nurse-maya.png",
+    }
     avatar_b64 = None
     if fs.is_available:
         try:
-            # Check if user already has an avatar
             profile = await fs.get_patient_profile(uid)
-            if profile and profile.get("avatar_b64"):
+            # When companion_name matches a preset, always use the preset avatar so we never show
+            # a stale avatar from a previous persona. This fixes the inconsistency when users
+            # switch from custom to preset or between personas.
+            if companion_name in PRESET_AVATAR_FILES:
+                assets_dir = Path(__file__).parent.parent / "src" / "assets"
+                preset_path = assets_dir / PRESET_AVATAR_FILES[companion_name]
+                if preset_path.exists():
+                    avatar_bytes = preset_path.read_bytes()
+                    b64 = base64.b64encode(avatar_bytes).decode("utf-8")
+                    avatar_b64 = f"data:image/png;base64,{b64}"
+                    await fs.save_user_profile(uid, {"avatar_b64": avatar_b64})
+                    logger.info("Using preset avatar for companion_name=%s", companion_name)
+            if not avatar_b64 and profile and profile.get("avatar_b64"):
                 avatar_b64 = profile["avatar_b64"]
-            else:
+            if not avatar_b64:
                 # Generate a friendly random avatar based on companion name
                 from app.api.avatar import generate_avatar
                 from fastapi import Form
-                
                 logger.info(f"Generating new avatar for {companion_name}...")
                 avatar_response = await generate_avatar(
                     companion_name=companion_name,
@@ -605,8 +649,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     # --- Phase 2.5: Proactive Audio Injection ---
     # Priority: explicit query param > smart routing based on profile
     proactive_prompt = websocket.query_params.get("proactive_prompt")
+    exercises_completed_param = websocket.query_params.get("exercises_completed")
     if proactive_prompt:
         logger.info("Injecting explicit proactive prompt: %s", proactive_prompt)
+        _dbg_log("main.py:ws_connect", "proactive_prompt received", {"has_wellness": "WELLNESS_SESSION_START" in proactive_prompt})
     elif not onboarding_complete:
         proactive_prompt = (
             f"[SYSTEM: This is a brand-new user who has NOT completed onboarding. "
@@ -622,6 +668,23 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         )
         logger.info("Returning user '%s' — injecting warm greeting prompt", patient_name)
 
+    # Resume on reconnect: when Exercise page reconnects with exercises_completed=N,
+    # inject instruction to resume from exercise N+1 instead of restarting.
+    if proactive_prompt and "WELLNESS_SESSION_START" in proactive_prompt and exercises_completed_param:
+        try:
+            n = int(exercises_completed_param)
+            if 1 <= n < 14:
+                resume_msg = (
+                    f"\n\n[SYSTEM: User reconnected. They have completed exercises 1 through {n}. "
+                    f"Resume with exercise {n + 1}. Call get_next_exercise({n}) to get the next exercise. "
+                    f"Do NOT restart from Box Breathing. Do NOT re-greet.]"
+                )
+                proactive_prompt = proactive_prompt + resume_msg
+                session.state["exercises_completed"] = n
+                logger.info("Exercise resume: user completed %s, resuming from exercise %s", n, n + 1)
+        except (ValueError, TypeError):
+            pass
+
     if proactive_prompt:
         content = types.Content(
             parts=[types.Part(text=proactive_prompt)]
@@ -632,6 +695,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     # so the model naturally softens its tone to match the meditative context.
     is_wellness_session = proactive_prompt and "WELLNESS_SESSION_START" in proactive_prompt
     if is_wellness_session:
+        session.state["is_wellness_session"] = True
+        _dbg_log("main.py:init", "is_wellness_session set", {"session_id": session_id})
         voice_name = "Kore"  # Soft, gentle voice — best for guided wellness
         logger.info("Wellness session detected — using Kore voice + affective dialog")
 
@@ -639,8 +704,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     # VAD: endOfSpeechSensitivity=LOW so the model commits end-of-turn with shorter
     # silence; silenceDurationMs=400ms balances latency vs allowing natural pauses.
     # For wellness sessions, increase silence_duration_ms so the agent pauses longer
-    # between cues, creating a more meditative rhythm.
-    silence_ms = 800 if is_wellness_session else 400
+    # between cues. Older adults take longer pauses when speaking and breathe heavily
+    # during exercise — 400ms would cut them off. 2000ms gives time for "feedback + Are you ready?"
+    silence_ms = 2000 if is_wellness_session else 400
     realtime_input_config = types.RealtimeInputConfig(
         automatic_activity_detection=types.AutomaticActivityDetection(
             end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
@@ -739,6 +805,79 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 elif msg_type == "text":
                     user_text = msg["text"]
                     logger.info("Upstream text received (e.g. greeting): %s", user_text[:80] + "..." if len(user_text) > 80 else user_text)
+
+                    # Intercept "stop" / "end session" in wellness — force complete_exercise_session
+                    stop_words = ("stop", "okay stop", "end session", "that's enough", "i'm done", "no more", "quit", "we're done")
+                    if user_text and (user_text.strip().lower() in stop_words or any(w in user_text.lower() for w in stop_words)):
+                        try:
+                            sess = await session_service.get_session(
+                                app_name=APP_NAME, user_id=uid, session_id=session_id
+                            )
+                            is_wellness = sess and sess.state.get("is_wellness_session")
+                            _dbg_log("main.py:text_stop", "text stop check", {"user_text": user_text[:50], "is_wellness": is_wellness, "sess_exists": sess is not None})
+                            if sess and sess.state.get("is_wellness_session"):
+                                from agents.exercise.tools import EXERCISE_PROGRESS
+                                n = max(1, EXERCISE_PROGRESS.get(uid, sess.state.get("exercises_completed", 0)))
+                                user_text = (
+                                    f"[SYSTEM: USER SAID STOP. You MUST call complete_exercise_session({n}, 'User ended session') "
+                                    f"immediately. Say 'No problem! You did great. Let's wrap up.' and end. Do NOT continue coaching.]"
+                                )
+                                _dbg_log("main.py:text_stop", "TEXT STOP INTERCEPTED", {"n": n})
+                                logger.info("Exercise stop intercepted: injecting complete_exercise_session directive")
+                        except Exception as e:
+                            logger.warning("Failed to intercept stop for exercise: %s", e)
+
+                    # Intercept "coach paused" nudge — replace with concise resume directive
+                    if user_text and ("coach paused" in user_text.lower() or "Coach paused" in user_text):
+                        user_text = (
+                            "[SYSTEM: Coach paused. Resume — continue counting the rhythm. Do NOT re-introduce. Do NOT say 'Let's start with' again.]"
+                        )
+                        logger.info("Coach paused nudge intercepted")
+
+                    # Intercept "yes"/"ready" in wellness — user confirming "Are you ready for the next one?"
+                    continue_phrases = ("yes", "ready", "let's go", "lets go", "yeah", "yep", "sure")
+                    if user_text and any(p in user_text.strip().lower() for p in continue_phrases) and len(user_text.strip()) < 40:
+                        try:
+                            sess = await session_service.get_session(
+                                app_name=APP_NAME, user_id=uid, session_id=session_id
+                            )
+                            if sess and sess.state.get("is_wellness_session"):
+                                from agents.exercise.tools import EXERCISE_PROGRESS, EXERCISE_LIST
+                                last_logged = EXERCISE_PROGRESS.get(uid, sess.state.get("exercises_completed", 0))
+                                n = last_logged + 1
+                                if n <= 14:
+                                    EXERCISE_PROGRESS[uid] = n
+                                    exercise_name = EXERCISE_LIST[n - 1][0] if n <= len(EXERCISE_LIST) else "Box Breathing"
+                                    user_text = (
+                                        f"[SYSTEM: User confirmed. Call log_exercise_progress('{exercise_name}', {n}, 'user confirmed') "
+                                        f"then get_next_exercise({n}). Introduce ONLY the next exercise — never Box Breathing again.]"
+                                    )
+                                    logger.info("Exercise 'yes/ready' intercepted (text): n=%s", n)
+                        except Exception as e:
+                            logger.warning("Failed to intercept 'yes/ready' for exercise: %s", e)
+
+                    # Intercept "let's do the next exercise" in wellness — user wants to CONTINUE, not end
+                    next_phrases = ("let's do the next exercise", "next exercise", "next one", "let's go to the next")
+                    if user_text and any(p in user_text.strip().lower() for p in next_phrases):
+                        try:
+                            sess = await session_service.get_session(
+                                app_name=APP_NAME, user_id=uid, session_id=session_id
+                            )
+                            if sess and sess.state.get("is_wellness_session"):
+                                from agents.exercise.tools import EXERCISE_PROGRESS, EXERCISE_LIST
+                                last_logged = EXERCISE_PROGRESS.get(uid, sess.state.get("exercises_completed", 0))
+                                n = last_logged + 1
+                                if n <= 14:
+                                    EXERCISE_PROGRESS[uid] = n
+                                    exercise_name = EXERCISE_LIST[n - 1][0] if n <= len(EXERCISE_LIST) else "Box Breathing"
+                                    user_text = (
+                                        f"[SYSTEM: User wants NEXT. Call log_exercise_progress('{exercise_name}', {n}, '') "
+                                        f"then get_next_exercise({n}). Introduce ONLY the next exercise.]"
+                                    )
+                                    logger.info("Exercise 'next' intercepted (text): n=%s", n)
+                        except Exception as e:
+                            logger.warning("Failed to intercept 'next' for exercise: %s", e)
+
                     red_line_hit = _scan_red_line(user_text)
                     if red_line_hit:
                         logger.warning(
@@ -806,6 +945,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         first_audio_logged = False
         gemini_ready_sent = False
         logger.info("Downstream task started, waiting for events from runner.run_live...")
+        # Send ready immediately so the client can start speaking. Gemini Live native-audio
+        # may not respond to text-only proactive prompts; the user's speech will trigger the first response.
+        try:
+            await websocket.send_text('{"type":"ready"}')
+            gemini_ready_sent = True
+            logger.info("Gemini Live ready signal sent to client (immediate)")
+        except Exception:
+            pass
         try:
             session_obj = await session_service.get_session(
                 app_name=APP_NAME, 
@@ -843,12 +990,21 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 # 2. Check for Voice Settings Change (triggers WS Re-Init)
                 new_voice = session_obj.state.pop("new_voice_name", None)
                 if new_voice:
-                    logger.info(f"Voice changed to {new_voice}. Closing WS (code 4005) to force client re-init.")
-                    try:
-                        await websocket.close(code=4005, reason="voice_settings_changed")
-                    except Exception:
-                        pass
-                    return  # Break the run_live loop gracefully
+                    onboarding_complete = session_obj.state.get("onboarding_complete", True)
+                    if not onboarding_complete:
+                        # User is mid-onboarding — defer reconnect to avoid losing context
+                        logger.info(
+                            "Voice changed to %s but user is mid-onboarding; deferring 4005. "
+                            "Voice will apply on next connect.",
+                            new_voice,
+                        )
+                    else:
+                        logger.info(f"Voice changed to {new_voice}. Closing WS (code 4005) to force client re-init.")
+                        try:
+                            await websocket.close(code=4005, reason="voice_settings_changed")
+                        except Exception:
+                            pass
+                        return  # Break the run_live loop gracefully
 
                 # First event means Gemini Live is connected — tell the client
                 if not gemini_ready_sent:
@@ -882,6 +1038,68 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                         if event.output_transcription
                         else None
                     )
+                    # Intercept voice "stop" in wellness — inject directive for next turn
+                    if input_tx_text:
+                        stop_words = ("stop", "okay stop", "end session", "that's enough", "i'm done", "no more", "quit", "we're done")
+                        negations = ("don't stop", "do not stop", "won't stop", "never stop", "can't stop", "cannot stop")
+                        txt_lower = input_tx_text.strip().lower()
+                        stop_detected = not any(neg in txt_lower for neg in negations) and (txt_lower in stop_words or any(w in txt_lower for w in stop_words))
+                        if stop_detected:
+                            is_wellness = session_obj and session_obj.state.get("is_wellness_session")
+                            _dbg_log("main.py:voice_stop", "voice stop check", {"input_tx": input_tx_text[:80], "is_wellness": is_wellness, "session_obj": session_obj is not None})
+                            try:
+                                if session_obj and session_obj.state.get("is_wellness_session"):
+                                    from agents.exercise.tools import EXERCISE_PROGRESS
+                                    n = max(1, EXERCISE_PROGRESS.get(uid, session_obj.state.get("exercises_completed", 0)))
+                                    directive = (
+                                        f"[SYSTEM: USER SAID STOP. As the exercise coach, you MUST call complete_exercise_session({n}, 'User ended session') "
+                                        f"immediately. Say ONLY: 'No problem! You did great today. Let's wrap up.' Then give a brief warm closing. "
+                                        f"Do NOT ask 'was there anything else I can help you with'. Do NOT transfer to another agent.]"
+                                    )
+                                    live_request_queue.send_content(types.Content(parts=[types.Part(text=directive)]))
+                                    _dbg_log("main.py:voice_stop", "VOICE STOP INTERCEPTED", {"n": n})
+                                    logger.info("Exercise stop intercepted (voice): injecting complete_exercise_session directive")
+                            except Exception as e:
+                                logger.warning("Failed to intercept voice stop for exercise: %s", e)
+                        # Intercept "yes"/"ready"/"let's go" (continuation after "Are you ready?") — inject resume directive
+                        continue_phrases = ("yes", "ready", "let's go", "lets go", "yeah", "yep", "sure")
+                        if any(p in txt_lower for p in continue_phrases) and len(txt_lower) < 40:
+                            _dbg_log("main.py:user_yes", "USER SAID YES/READY", {"input_tx": input_tx_text[:60], "hypothesisId": "H4"})
+                            try:
+                                if session_obj and session_obj.state.get("is_wellness_session"):
+                                    from agents.exercise.tools import EXERCISE_PROGRESS, EXERCISE_LIST
+                                    last_logged = EXERCISE_PROGRESS.get(uid, session_obj.state.get("exercises_completed", 0))
+                                    n = last_logged + 1  # exercise we're about to log (1-based)
+                                    if n <= 14:
+                                        EXERCISE_PROGRESS[uid] = n  # Proactively advance so get_next_exercise returns next
+                                        exercise_name = EXERCISE_LIST[n - 1][0] if n <= len(EXERCISE_LIST) else "Box Breathing"
+                                        directive = (
+                                            f"[SYSTEM: User confirmed. You MUST call log_exercise_progress('{exercise_name}', {n}, 'user confirmed') "
+                                            f"then get_next_exercise({n}). Introduce ONLY the next exercise — never Box Breathing again.]"
+                                        )
+                                        live_request_queue.send_content(types.Content(parts=[types.Part(text=directive)]))
+                                        logger.info("Exercise 'yes/ready' intercepted (voice): n=%s, advanced EXERCISE_PROGRESS", n)
+                            except Exception as e:
+                                logger.warning("Failed to intercept 'yes/ready' for exercise: %s", e)
+                        # Intercept voice "next exercise" — user wants to CONTINUE
+                        next_phrases = ("let's do the next exercise", "next exercise", "next one", "let's go to the next")
+                        if not stop_detected and any(p in txt_lower for p in next_phrases):
+                            try:
+                                if session_obj and session_obj.state.get("is_wellness_session"):
+                                    from agents.exercise.tools import EXERCISE_PROGRESS, EXERCISE_LIST
+                                    last_logged = EXERCISE_PROGRESS.get(uid, session_obj.state.get("exercises_completed", 0))
+                                    n = last_logged + 1
+                                    if n <= 14:
+                                        EXERCISE_PROGRESS[uid] = n
+                                        exercise_name = EXERCISE_LIST[n - 1][0] if n <= len(EXERCISE_LIST) else "Box Breathing"
+                                        directive = (
+                                            f"[SYSTEM: User wants NEXT. Call log_exercise_progress('{exercise_name}', {n}, '') "
+                                            f"then get_next_exercise({n}). Introduce ONLY the next exercise.]"
+                                        )
+                                        live_request_queue.send_content(types.Content(parts=[types.Part(text=directive)]))
+                                        logger.info("Exercise 'next' intercepted (voice): n=%s", n)
+                            except Exception as e:
+                                logger.warning("Failed to intercept voice 'next' for exercise: %s", e)
                     # Diagnostic: log every input_transcription so we can confirm speech is recognized
                     if input_tx_text:
                         logger.info(

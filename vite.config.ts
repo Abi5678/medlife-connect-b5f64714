@@ -7,20 +7,20 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 8082,
     hmr: {
       overlay: false,
     },
     proxy: {
       // WebSocket — must be proxied before HTTP entries
       "/ws": {
-        target: "http://localhost:8001",
+        target: "http://localhost:8002",
         ws: true,
         changeOrigin: true,
       },
       // REST API
       "/api": {
-        target: "http://localhost:8001",
+        target: "http://localhost:8002",
         changeOrigin: true,
       },
     },

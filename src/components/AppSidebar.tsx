@@ -15,11 +15,13 @@ import {
   Menu,
   X,
   Heart,
+  Home,
   LogOut,
 } from "lucide-react";
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/", icon: Home, label: "Home" },
+  { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/voice", icon: Mic, label: "Voice Guardian" },
   { to: "/pills", icon: Pill, label: "Pill Check" },
   { to: "/food", icon: Camera, label: "Food Log" },

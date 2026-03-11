@@ -344,28 +344,75 @@ def log_vitals(
     }
 
 
-def log_meal(
-    description: str, meal_type: str = "snack", tool_context=None
-) -> dict:
-    """Record a meal or snack the patient has eaten.
-
+def initiate_food_scan(description: str, tool_context=None) -> dict:
+    """Trigger the frontend to scan food via the camera. DO NOT use this to save.
+    
+    Call this when you see food on the camera. It will tell the frontend to 
+    take a picture, analyze it for macros, and send the results back to you.
+    After you receive the results, read them to the user and ask for 
+    permission to save.
+    
     Args:
-        description: What the patient ate (e.g. 'oatmeal with fruit and tea').
+        description: What you see (e.g. 'a plate of spaghetti').
+    """
+    emit_ui_update(
+        "food_detected",
+        {"description": description, "message": "Scanning macros..."},
+        tool_context,
+    )
+    return {
+        "success": True, 
+        "message": f"Told the UI to scan '{description}'. Wait for the UI to return the macro results."
+    }
+
+def confirm_and_save_meal(
+    description: str,
+    meal_type: str,
+    food_items: list[str],
+    calories: int,
+    protein_g: int,
+    carbs_g: int,
+    fat_g: int,
+    tool_context=None
+) -> dict:
+    """Save a meal with full macro data AFTER the user confirms.
+    
+    Args:
+        description: The general description of the meal.
         meal_type: The type of meal: 'breakfast', 'lunch', 'dinner', or 'snack'.
+        food_items: The list of items identified.
+        calories: Estimated calories.
+        protein_g: Estimated protein in grams.
+        carbs_g: Estimated carbs in grams.
+        fat_g: Estimated fat in grams.
     """
     today = datetime.now().strftime("%Y-%m-%d")
-    entry = {"date": today, "meal_type": meal_type, "description": description}
+    entry = {
+        "date": today,
+        "meal_type": meal_type,
+        "description": description,
+        "food_items": food_items,
+        "calories": calories,
+        "protein_g": protein_g,
+        "carbs_g": carbs_g,
+        "fat_g": fat_g,
+    }
 
     if _use_firestore(tool_context):
         user_id = _get_user_id(tool_context)
+        from agents.shared.firestore_service import FirestoreService
         fs = FirestoreService.get_instance()
-        fs.add_meals_entry_sync(user_id, entry)
+        # Ensure we're using the correct food log schema
+        import asyncio
+        asyncio.run(fs.add_food_log(user_id, entry))
     else:
+        # Fallback to general meals log just to avoid breaking mock, 
+        # though mock doesn't technically use the new macros schema
         MEALS_LOG.append(entry)
 
     emit_ui_update(
         "meal_logged",
-        {"description": description, "type": meal_type},
+        {"description": description, "type": meal_type, 'calories': calories},
         tool_context,
     )
 

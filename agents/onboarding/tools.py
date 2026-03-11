@@ -56,22 +56,29 @@ from agents.shared.ui_tools import emit_ui_update
 
 async def complete_onboarding_and_save(name: str, language: str, allergies: list[str], diet: str, emergency_contact_name: str, emergency_contact_phone: str, current_medications: str = "", tool_context=None) -> dict:
     """Saves the user's completed profile and triggers handoff.
-    
-    MUST be called after 'unambiguous and informed' consent is given.
+
+    MUST be called only after: (1) you have gathered name, language, allergies, diet,
+    medications, emergency contact, and (2) the user has given unambiguous consent.
+    Never call with empty or inferred defaults — only after the user has explicitly
+    provided or declined each item.
     """
     try:
         uid = tool_context.state.get("user_id", "demo_user")
         fs = FirestoreService.get_instance()
         
         # 1. Save preferences (including persistent onboarding flag)
+        # Use display_name and flat emergency fields so Profile UI matches React onboarding
         profile_data = {
             "name": name,
+            "display_name": name,
             "language": language,
             "onboarding_complete": True,
             "emergency_contact": [{
                 "name": emergency_contact_name,
                 "phone": emergency_contact_phone
-            }]
+            }],
+            "emergency_contact_name": emergency_contact_name,
+            "emergency_contact_phone": emergency_contact_phone,
         }
         await fs.save_user_profile(uid, profile_data)
         

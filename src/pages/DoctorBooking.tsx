@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { MapPin, Calendar, Clock, Star, CheckCircle2, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { MapPin, Calendar, Star, CheckCircle2, Loader2, Mic, Hand } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAppointments } from "@/lib/api";
@@ -21,6 +22,7 @@ interface Appointment {
 }
 
 const DoctorBooking = () => {
+  const navigate = useNavigate();
   const { user, getIdToken } = useAuth();
   const [selectedHospital, setSelectedHospital] = useState<number | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([
@@ -98,6 +100,28 @@ const DoctorBooking = () => {
           Find nearby hospitals and book appointments via voice or tap
           {loading && <Loader2 size={14} className="ml-2 inline animate-spin" />}
         </p>
+
+        {/* Voice / Tap options */}
+        <div className="mt-6 flex flex-wrap gap-4">
+          <button
+            onClick={() =>
+              navigate("/voice", {
+                state: {
+                  proactivePrompt:
+                    "[SYSTEM: The user is on the Book Doctor page and wants to find or book an appointment. Help them find nearby hospitals and book an appointment. Be conversational and guide them through the process.]",
+                },
+              })
+            }
+            className="flex items-center gap-3 rounded-lg border-2 border-primary bg-primary/10 px-5 py-3 font-medium text-primary transition-all hover:bg-primary/20 hover:shadow-md"
+          >
+            <Mic size={22} strokeWidth={1.5} />
+            Use Voice
+          </button>
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
+            <Hand size={18} strokeWidth={1.5} />
+            <span>Tap a hospital card below to select and book</span>
+          </div>
+        </div>
       </div>
 
       {/* Upcoming */}

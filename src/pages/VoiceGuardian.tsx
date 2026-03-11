@@ -187,11 +187,43 @@ function renderUICard(event: UIEvent, index: number) {
   );
 }
 
+import { saveProfile } from "@/lib/api";
+
 const VoiceGuardian = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, getIdToken } = useAuth();
   const [selectedPersona, setSelectedPersona] = useState("en");
+
+  // Fetch true profile language so the pill matches actual db preference
+  useEffect(() => {
+    getIdToken().then(async (token) => {
+      if (token && token !== "demo") {
+        try {
+          const { getProfile } = await import("@/lib/api");
+          const profile = await getProfile(token) as Record<string, any>;
+          if (profile?.language) {
+            const found = Object.values(LANGUAGE_PERSONAS).find(p => p.label === profile.language);
+            if (found) setSelectedPersona(found.code);
+          }
+        } catch (e) {
+          console.error("Failed to fetch language preference", e);
+        }
+      }
+    });
+  }, [getIdToken]);
+
+  const handlePersonaChange = async (langCode: string, langLabel: string) => {
+    setSelectedPersona(langCode);
+    const token = await getIdToken();
+    if (token) {
+      try {
+        await saveProfile({ language: langLabel }, token);
+      } catch (e) {
+        console.error("Failed to save language preference", e);
+      }
+    }
+  };
   const [textInput, setTextInput] = useState("");
   const [firebaseToken, setFirebaseToken] = useState<string>("demo");
   const [cameraActive, setCameraActive] = useState(false);
@@ -201,40 +233,12 @@ const VoiceGuardian = () => {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-
-
-
-  const handleUIEvent = useCallback((event: UIEvent) => {
-    // Agent-triggered page navigation
-    if (event.target === "navigate") {
-      const page = (event.data as Record<string, unknown>)?.page;
-      if (typeof page === "string") {
-        navigate(page);
-        return; // don't push navigate events to the activity panel
-      }
-    }
-
-    pushUIEvent(event);
-    setUIEvents((prev) => [...prev, event]);
-
-    // Toast for key events
-    if (event.target === "pill_verified") {
-      const data = (event.data ?? event) as Record<string, unknown>;
-      toast({
-        title: data.verified ? "Pill Verified" : "Pill Mismatch!",
-        description: data.verified
-          ? "This medication matches your prescription"
-          : "WARNING: This pill does not match your medications",
-        variant: data.verified ? "default" : "destructive",
-      });
-    } else if (event.target === "booking_emergency" || event.target === "emergency_alert") {
-      toast({
-        variant: "destructive",
-        title: "Emergency Alert",
-        description: "Emergency protocol activated",
-      });
-    }
-  }, [navigate]);
+  // Stable callback for useVoiceGuardian — delegates to the real handler via ref.
+  // Must be defined before useVoiceGuardian since handleUIEventReal depends on sendText/startCamera/stopCamera from the hook.
+  const handleUIEventRef = useRef<(event: UIEvent) => void>(() => {});
+  const onUIEventStable = useCallback((event: UIEvent) => {
+    handleUIEventRef.current(event);
+  }, []);
 
   const {
     status,
@@ -260,7 +264,7 @@ const VoiceGuardian = () => {
         description: msg,
       });
     },
-    onUIEvent: handleUIEvent,
+    onUIEvent: onUIEventStable,
   });
 
   const hasAutoConnected = useRef(false);
@@ -345,6 +349,61 @@ const VoiceGuardian = () => {
     }
     setCameraActive(false);
   }, []);
+
+  const handleUIEventReal = useCallback((event: UIEvent) => {
+    if (event.target === "navigate") {
+      const page = (event.data as Record<string, unknown>)?.page;
+      if (typeof page === "string") {
+        navigate(page);
+        return;
+      }
+    }
+    pushUIEvent(event);
+    setUIEvents((prev) => [...prev, event]);
+    if (event.target === "pill_verified") {
+      const data = (event.data ?? event) as Record<string, unknown>;
+      toast({
+        title: data.verified ? "Pill Verified" : "Pill Mismatch!",
+        description: data.verified
+          ? "This medication matches your prescription"
+          : "WARNING: This pill does not match your medications",
+        variant: data.verified ? "default" : "destructive",
+      });
+    } else if (event.target === "booking_emergency" || event.target === "emergency_alert") {
+      toast({
+        variant: "destructive",
+        title: "Emergency Alert",
+        description: "Emergency protocol activated",
+      });
+    }
+    if (event.target === "food_detected") {
+      if (!cameraActive) startCamera();
+      setTimeout(async () => {
+        if (!videoRef.current) return;
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        canvas.width = 640;
+        canvas.height = 480;
+        ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+        const base64Image = dataUrl.split(",")[1];
+        try {
+          const { analyzeFood } = await import("@/lib/api");
+          const result = await analyzeFood(base64Image);
+          sendText(`[SYSTEM: Food Analysis Complete. Macros: ${result.calories} kcal, ${result.protein_g}g Protein, ${result.carbs_g}g Carbs, ${result.fat_g}g Fat. Items: ${result.food_items.join(", ")}.]`, { silent: true });
+          stopCamera();
+        } catch (error) {
+          console.error("Food analysis failed", error);
+          sendText(`[SYSTEM: Food Analysis Failed. Wait for user to input manually.]`, { silent: true });
+        }
+      }, 1500);
+    }
+  }, [navigate, pushUIEvent, cameraActive, startCamera, stopCamera, sendText]);
+
+  useEffect(() => {
+    handleUIEventRef.current = handleUIEventReal;
+  }, [handleUIEventReal]);
 
   const toggleCamera = () => {
     if (cameraActive) {
@@ -523,7 +582,7 @@ const VoiceGuardian = () => {
             {Object.values(LANGUAGE_PERSONAS).map((lang) => (
               <button
                 key={lang.code}
-                onClick={() => setSelectedPersona(lang.code)}
+                onClick={() => handlePersonaChange(lang.code, lang.label)}
                 disabled={isActive}
                 className={`rounded-full px-4 py-1.5 font-mono text-xs uppercase tracking-widest transition-colors duration-150 disabled:opacity-60 ${selectedPersona === lang.code
                   ? "bg-primary text-primary-foreground"

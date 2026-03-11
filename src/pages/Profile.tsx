@@ -5,6 +5,7 @@ import AppLayout from "@/components/AppLayout";
 import { clearOnboarding, getOnboardingState } from "@/lib/personas";
 import { getProfile, saveProfile } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "@/hooks/use-toast";
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -48,17 +49,29 @@ const Profile = () => {
     try {
       setSaving(true);
       const token = await getIdToken();
-      if (token) {
-        const payload = { ...editForm };
-        if (customAvatar) {
-          payload.user_avatar_b64 = customAvatar;
-        }
-        await saveProfile(payload, token);
-        setProfile(payload);
-        setIsEditing(false);
+      if (!token) {
+        toast({
+          variant: "destructive",
+          title: "Not signed in",
+          description: "Please sign in to save your profile.",
+        });
+        return;
       }
+      const payload = { ...editForm };
+      if (customAvatar) {
+        payload.user_avatar_b64 = customAvatar;
+      }
+      await saveProfile(payload, token);
+      setProfile(payload);
+      setIsEditing(false);
+      toast({ title: "Profile saved", description: "Your changes have been saved." });
     } catch (e) {
       console.error("Failed to save profile", e);
+      toast({
+        variant: "destructive",
+        title: "Save failed",
+        description: e instanceof Error ? e.message : "Could not save profile. Please try again.",
+      });
     } finally {
       setSaving(false);
     }
@@ -209,16 +222,30 @@ const Profile = () => {
             </button>
           </div>
 
-          {onboarding.persona && (
+          {(profile?.companion_name || onboarding.persona) && (
             <div className="mt-6 flex items-center gap-4 rounded-md border border-border p-4">
-              <img
-                src={onboarding.persona.avatar}
-                alt={onboarding.persona.name}
-                className="h-12 w-12 rounded-full border-2 border-primary/20 object-cover"
-              />
+              {profile?.avatar_b64 ? (
+                <img
+                  src={profile.avatar_b64.startsWith("data:") ? profile.avatar_b64 : `data:image/png;base64,${profile.avatar_b64}`}
+                  alt={profile.companion_name || "Companion"}
+                  className="h-12 w-12 rounded-full border-2 border-primary/20 object-cover"
+                />
+              ) : onboarding.persona ? (
+                <img
+                  src={onboarding.persona.avatar}
+                  alt={onboarding.persona.name}
+                  className="h-12 w-12 rounded-full border-2 border-primary/20 object-cover"
+                />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-primary/20 bg-primary/10">
+                  <User size={20} className="text-primary/50" />
+                </div>
+              )}
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Current Companion</p>
-                <p className="mt-0.5 text-sm font-semibold">{onboarding.persona.name} · {onboarding.persona.language}</p>
+                <p className="mt-0.5 text-sm font-semibold">
+                  {profile?.companion_name || onboarding.persona?.name} · {profile?.language || onboarding.persona?.language || "English"}
+                </p>
               </div>
             </div>
           )}
@@ -284,6 +311,20 @@ const Profile = () => {
                   value={editForm.blood_type || ""}
                   onChange={e => setEditForm({ ...editForm, blood_type: e.target.value })}
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Primary Language</label>
+                <select
+                  className="w-full mt-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={editForm.language || "English"}
+                  onChange={e => setEditForm({ ...editForm, language: e.target.value })}
+                >
+                  <option value="English">English</option>
+                  <option value="Hindi">Hindi</option>
+                  <option value="Kannada">Kannada</option>
+                  <option value="Spanish">Spanish</option>
+                </select>
               </div>
 
               <div>

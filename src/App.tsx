@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { getOnboardingState } from "@/lib/personas";
+import Welcome from "./pages/Welcome";
 import Dashboard from "./pages/Dashboard";
 import VoiceGuardian from "./pages/VoiceGuardian";
 import PillCheck from "./pages/PillCheck";
@@ -57,7 +58,8 @@ const App = () => (
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
-            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/" element={<ProtectedRoute><Welcome /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/voice" element={<ProtectedRoute><VoiceGuardian /></ProtectedRoute>} />
             <Route path="/pills" element={<ProtectedRoute><PillCheck /></ProtectedRoute>} />
             <Route path="/food" element={<ProtectedRoute><FoodLog /></ProtectedRoute>} />

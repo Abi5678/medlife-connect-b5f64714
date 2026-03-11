@@ -1,10 +1,30 @@
 """Exercise agent tools: session management, progress logging, and history."""
 
+import json
 import uuid
 from datetime import datetime, timezone
 
 from agents.shared.firestore_service import FirestoreService
 from agents.shared.ui_tools import emit_ui_update
+
+# #region debug instrumentation
+import os as _os
+import logging as _logging
+_debug_logger = _logging.getLogger("exercise_tools_debug")
+
+def _dbg(tool: str, message: str, data: dict, hypothesis_id: str = ""):
+    import time
+    payload = {"sessionId": "5959a7", "location": f"tools.py:{tool}", "message": message, "data": data, "timestamp": int(time.time() * 1000), "hypothesisId": hypothesis_id}
+    _debug_logger.info("[DEBUG-5959a7] %s", json.dumps(payload))
+    try:
+        base = _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__)))
+        path = _os.path.join(base, ".cursor", "debug-5959a7.log")
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 
 EXERCISE_PHASES = [
@@ -15,6 +35,49 @@ EXERCISE_PHASES = [
 ]
 
 TOTAL_EXERCISES = 14
+
+# Global progress store — run_live mode may not propagate session state reliably.
+# Key: user_id, Value: last logged exercise_number (1-14)
+EXERCISE_PROGRESS: dict[str, int] = {}
+
+# Ordered list for get_next_exercise
+EXERCISE_LIST = [
+    ("Box Breathing", 35),
+    ("Deep Belly Breathing", 60),
+    ("Neck Rolls", 30),
+    ("Shoulder Shrugs", 30),
+    ("Seated Side Bend", 60),
+    ("Wrist & Ankle Circles", 60),
+    ("Mountain Pose", 30),
+    ("Tree Pose", 45),
+    ("Warrior I", 45),
+    ("Seated Cat-Cow", 30),
+    ("Child's Pose", 30),
+    ("Seated Forward Fold", 30),
+    ("Gentle Spinal Twist", 30),
+    ("Final Relaxation", 60),
+]
+
+
+def get_next_exercise(last_completed_number: int, tool_context=None) -> dict:
+    """Returns the next exercise to do. Call this after log_exercise_progress to know what comes next.
+
+    Args:
+        last_completed_number: The exercise number you just logged (1-14). Use 0 for the first exercise.
+    """
+    _dbg("get_next_exercise", "entry", {"last_completed_number": last_completed_number}, "H1")
+    uid = _get_user_id(tool_context)
+    highest_logged = EXERCISE_PROGRESS.get(uid, 0)
+    # Guardrail: never go backwards. If agent passes a smaller number than already logged,
+    # use the highest so we always advance through the list (avoids Box Breathing loop).
+    effective_last = max(last_completed_number, highest_logged)
+    if effective_last >= TOTAL_EXERCISES:
+        return {"next": None, "message": "Session complete. Call complete_exercise_session."}
+    idx = effective_last  # 0-based index into EXERCISE_LIST
+    name, duration = EXERCISE_LIST[idx]
+    out = {"exercise_name": name, "exercise_number": idx + 1, "duration_seconds": duration, "message": f"Next: {name} ({duration}s). Introduce this one — do not skip."}
+    _dbg("get_next_exercise", "exit", {"effective_last": effective_last, "highest_logged": highest_logged, **out}, "H1")
+    return out
 
 
 def _get_user_id(tool_context) -> str:
@@ -37,38 +100,26 @@ def _get_phase_for_exercise(exercise_number: int) -> str:
     return "Cool-Down"
 
 
+def _exercise_name_to_number(name: str) -> int:
+    """Return 1-based exercise number for name, or 0 if unknown."""
+    for i, (n, _) in enumerate(EXERCISE_LIST):
+        if n == name:
+            return i + 1
+    return 0
+
+
 def await_exercise_completion(
     exercise_name: str,
     duration_seconds: int = 30,
     tool_context=None,
 ) -> dict:
-    """Start the exercise hold timer. Returns immediately — do NOT wait silently.
+    """Updates the frontend UI to start the purely-visual timer for the user.
 
-    Call this right after announcing the exercise and giving initial instructions.
-    The frontend will count down and send you a voice signal when time is up.
-
-    CRITICAL — while the timer runs you MUST keep coaching:
-    - Count the rhythm aloud ("In... 2... 3... 4... Out... 2... 3... 4...")
-    - Encourage continuously ("You're doing great! Keep it going!")
-    - Comment on what you see in the camera ("Your posture looks wonderful!")
-    - Count down the final 5 seconds ("5... 4... 3... 2... 1... and release!")
-    Do NOT go silent. The user needs to hear you the whole time.
-
-    When you hear "Time is up" in the conversation, that is the completion signal.
-    Only THEN should you call log_exercise_progress and announce the next exercise.
-
-    Args:
-        exercise_name: Name of the exercise (e.g. "Box Breathing")
-        duration_seconds: Duration in seconds. Use exact values: 30, 45, or 60.
+    The duration is only for the on-screen countdown; the agent decides when
+    the exercise is done by watching the camera feed.
     """
-    import logging
+    _dbg("await_exercise_completion", "entry", {"exercise_name": exercise_name, "duration_seconds": duration_seconds}, "H1")
     actual_duration = max(duration_seconds, 15)
-    if actual_duration != duration_seconds:
-        logging.getLogger(__name__).warning(
-            "await_exercise_completion: duration_seconds=%s below minimum 15s — "
-            "clamped to %s for '%s'",
-            duration_seconds, actual_duration, exercise_name,
-        )
 
     emit_ui_update(
         "exercise_timer_started",
@@ -78,15 +129,21 @@ def await_exercise_completion(
 
     return {
         "status": "timer_started",
-        "exercise": exercise_name,
-        "duration_seconds": actual_duration,
-        "message": (
-            f"Timer started for '{exercise_name}' ({actual_duration}s). "
-            "Keep coaching the user actively — count the rhythm, encourage, "
-            "and comment on their posture from the camera. "
-            "Do NOT call log_exercise_progress yet. "
-            "Wait until you hear 'Time is up' then give feedback and log."
-        ),
+        "message": "UI updated. Guide the user, watch them via camera, and wrap up when they finish.",
+    }
+
+
+def notify_timer_complete(exercise_name: str, tool_context=None) -> dict:
+    """Stub — kept for imports. Agent uses camera to detect completion."""
+    return {"status": "ok", "message": "Acknowledged."}
+
+
+def wait_for_user_confirmation(tool_context=None) -> dict:
+    """Call after asking "Are you ready for the next one?" — signals you must end your turn and wait for the user."""
+    _dbg("wait_for_user_confirmation", "called", {}, "H2")
+    return {
+        "status": "waiting",
+        "message": "STOP SPEAKING NOW. End your turn. Do not say another word. Wait for the user to say yes, ready, or let's go. When they do, call log_exercise_progress(exercise_name, exercise_number, notes) for the exercise you just completed, then get_next_exercise(last_completed) to get the NEXT exercise, and introduce that new exercise once.",
     }
 
 
@@ -95,6 +152,7 @@ def start_exercise_session(tool_context=None) -> dict:
 
     Creates a session record and notifies the frontend to show the exercise UI.
     """
+    _dbg("start_exercise_session", "entry", {}, "H1")
     session_id = str(uuid.uuid4())[:8]
     now = datetime.now(timezone.utc)
 
@@ -108,8 +166,11 @@ def start_exercise_session(tool_context=None) -> dict:
     }
 
     # Store session_id in state for subsequent tool calls
+    uid = _get_user_id(tool_context)
     if tool_context and hasattr(tool_context, "state"):
         tool_context.state["exercise_session_id"] = session_id
+        tool_context.state["exercises_completed"] = 0  # no exercises logged yet
+    EXERCISE_PROGRESS[uid] = 0  # run_live: session state may not propagate
 
     emit_ui_update("exercise_session_started", {
         "session_id": session_id,
@@ -131,11 +192,12 @@ def log_exercise_progress(
     completed: bool = True,
     tool_context=None,
 ) -> dict:
-    """Log completion of each exercise with posture assessment.
-
-    Call this after each exercise with the name, number (1-14),
-    and any posture observations from the camera.
-    """
+    """Log completion of the exercise. Call after the user confirms they are ready to move on."""
+    _dbg("log_exercise_progress", "entry", {"exercise_name": exercise_name, "exercise_number": exercise_number}, "H3")
+    uid = _get_user_id(tool_context)
+    if tool_context and hasattr(tool_context, "state"):
+        tool_context.state["exercises_completed"] = exercise_number
+    EXERCISE_PROGRESS[uid] = exercise_number
     phase = _get_phase_for_exercise(exercise_number)
 
     emit_ui_update("exercise_pose_change", {
@@ -147,28 +209,9 @@ def log_exercise_progress(
         "completed": completed,
     }, tool_context)
 
-    # Determine next exercise hint
-    next_num = exercise_number + 1
-    next_hint = ""
-    count = 0
-    for p in EXERCISE_PHASES:
-        for ex in p["exercises"]:
-            count += 1
-            if count == next_num:
-                next_hint = f"Next: {ex} ({p['phase']})"
-                break
-        if next_hint:
-            break
-
-    if not next_hint and exercise_number >= TOTAL_EXERCISES:
-        next_hint = "All exercises complete! Time for the summary."
-
     return {
         "logged": True,
-        "exercise_name": exercise_name,
-        "exercise_number": exercise_number,
-        "phase": phase,
-        "next_exercise_hint": next_hint,
+        "message": "Progress logged. You may now introduce the next exercise.",
     }
 
 
@@ -177,13 +220,28 @@ def complete_exercise_session(
     overall_posture_notes: str = "",
     tool_context=None,
 ) -> dict:
-    """Finalize the session with summary. Call after the last exercise.
+    """Finalize the session with summary. Call after the last exercise OR when the user interrupts to stop.
 
-    Provide the total count of exercises completed and any overall posture observations.
+    Use when: (a) user completes exercise 14 (Final Relaxation), or (b) user says "stop", "end session",
+    "that's enough", etc. mid-session. Provide the ACTUAL count of exercises completed — never use 14
+    unless you actually coached all 14. If you only did Box Breathing, use 1.
     """
+    _dbg("complete_exercise_session", "entry", {"exercises_completed": exercises_completed}, "H4")
     session_id = None
+    uid = _get_user_id(tool_context)
+    last_logged = EXERCISE_PROGRESS.get(uid, 0)  # run_live: use global store
     if tool_context and hasattr(tool_context, "state"):
+        last_logged = max(last_logged, tool_context.state.get("exercises_completed", 0))
         session_id = tool_context.state.get("exercise_session_id")
+    # Reject wrong counts: exercises_completed can be at most last_logged + 1 (current exercise just finished)
+    if exercises_completed > last_logged + 1:
+        return {
+            "blocked": True,
+            "error": (
+                f"BLOCKED: You claimed {exercises_completed} exercises completed, but you've only logged {last_logged}. "
+                f"Use the ACTUAL count. If you only did Box Breathing, use 1. Never use 14 unless you completed all 14."
+            ),
+        }
 
     # Compute a simple posture score based on notes
     posture_score = min(100, 60 + exercises_completed * 3)
