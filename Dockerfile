@@ -33,10 +33,17 @@ COPY package.json package-lock.json* ./
 # Use npm ci for reproducible installs; fall back to npm install if lock missing
 RUN npm ci --prefer-offline 2>/dev/null || npm install
 
-# Copy source files
-COPY index.html vite.config.ts tsconfig*.json ./
+# Copy source files — all paths that tailwind.config.ts scans for class names
+COPY index.html ./
+COPY vite.config.ts ./
+COPY postcss.config.js ./
+COPY components.json ./
+COPY tsconfig*.json ./
 COPY public/ public/
 COPY src/ src/
+# Root-level components/ is scanned by Tailwind (content: ["./components/**/*.{ts,tsx}"])
+# Without it, Tailwind generates a near-empty CSS bundle → unstyled UI
+COPY components/ components/
 
 # Build the React SPA (outputs to /build/dist)
 # No VITE_* env vars needed at build time — URLs are resolved at runtime from
