@@ -10,8 +10,8 @@
 substitutions:
   _PROJECT_ID: "medlive-488722"
   _REGION: "us-central1"
-  _SERVICE_NAME: "heali"
-  _IMAGE: "gcr.io/medlive-488722/heali"
+  _SERVICE_NAME: "medlive"
+  _IMAGE: "gcr.io/medlive-488722/medlive"
 
 steps:
   # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ steps:
       - "--build-arg=VITE_FIREBASE_STORAGE_BUCKET=medlive-488722.firebasestorage.app"
       - "--build-arg=VITE_FIREBASE_MESSAGING_SENDER_ID=479757625763"
       - "--build-arg=VITE_FIREBASE_APP_ID=1:479757625763:web:61c5299bf510e2b3c3d216"
-      - "--build-arg=VITE_BACKEND_HOST=heali-zjp5lygwpa-uc.a.run.app"
+      - "--build-arg=VITE_BACKEND_HOST=medlive-zjp5lygwpa-uc.a.run.app"
       - "--build-arg=CACHEBUST=$(date +%s)"
       - "."
     timeout: "1200s"   # 20 min for Node install + Python deps
@@ -72,12 +72,12 @@ steps:
       - "--memory=2Gi"
       - "--cpu=2"
       - "--set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},GOOGLE_GENAI_USE_VERTEXAI=TRUE,MEDLIVE_MODEL=gemini-live-2.5-flash-native-audio,USE_FIRESTORE=true,GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-admin-sdk.json,SKIP_AUTH_FOR_TESTING=false"
-      - "--set-secrets=GOOGLE_API_KEY=heali-google-api-key:latest,/secrets/firebase-admin-sdk.json=heali-firebase-admin:latest,REMINDERS_TRIGGER_SECRET=heali-reminders-secret:latest"
+      - "--set-secrets=GOOGLE_API_KEY=medlive-google-api-key:latest,/secrets/firebase-admin-sdk.json=medlive-firebase-admin:latest,REMINDERS_TRIGGER_SECRET=medlive-reminders-secret:latest"
       - "--project=${_PROJECT_ID}"
 
 images:
-  - "gcr.io/medlive-488722/heali:$BUILD_ID"
-  - "gcr.io/medlive-488722/heali:latest"
+  - "gcr.io/medlive-488722/medlive:$BUILD_ID"
+  - "gcr.io/medlive-488722/medlive:latest"
 
 timeout: "2400s"   # 40 min total pipeline timeout
 
