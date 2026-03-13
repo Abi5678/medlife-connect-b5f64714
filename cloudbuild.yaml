@@ -64,7 +64,7 @@ steps:
       - "--timeout=3600"
       - "--memory=2Gi"
       - "--cpu=2"
-      - "--set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},GOOGLE_GENAI_USE_VERTEXAI=FALSE,MEDLIVE_MODEL=gemini-live-2.5-flash-native-audio,USE_FIRESTORE=true,GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-admin-sdk.json,SKIP_AUTH_FOR_TESTING=false"
+      - "--set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},GOOGLE_GENAI_USE_VERTEXAI=FALSE,MEDLIVE_MODEL=gemini-live-2.5-flash-native-audio,USE_FIRESTORE=true,GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-admin-sdk.json,SKIP_AUTH_FOR_TESTING=false,PORT=8000"
       - "--set-secrets=GOOGLE_API_KEY=medlive-google-api-key:latest,/secrets/firebase-admin-sdk.json=medlive-firebase-admin:latest,REMINDERS_TRIGGER_SECRET=medlive-reminders-secret:latest"
       - "--project=${_PROJECT_ID}"
 
