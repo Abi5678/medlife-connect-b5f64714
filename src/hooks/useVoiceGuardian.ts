@@ -358,29 +358,27 @@ export function useVoiceGuardian(options: UseVoiceGuardianOptions = {}) {
       // 6. Turn complete — support both turn_complete and turnComplete
       const turnComplete = msg.turn_complete ?? msg.turnComplete;
       if (turnComplete) {
-        setIsSpeaking(false);
         const hadAudio = hasAudioThisTurnRef.current;
         hasAudioThisTurnRef.current = false; // reset for next turn
 
-        if (audioMutedRef.current) {
-          if (!hadAudio) {
-            // Silent routing turn (root agent transferred to sub-agent with no audio).
-            // Keep mic muted — the real response is coming in the next turn.
-            // The 15 s safety timeout in sendText is the fallback.
-          } else if (activeSourcesRef.current.length === 0) {
-            // Turn had audio but it already finished playing — unmute now
+        // CRITICAL FIX: Do not immediately setIsSpeaking(false) or nextPlayTimeRef.current = 0.
+        // If audio is still playing or scheduled, let source.onended handle the cleanup.
+        const ctx = playbackContextRef.current;
+        const isStillPlaying = activeSourcesRef.current.length > 0 || (ctx && nextPlayTimeRef.current > ctx.currentTime + 0.1);
+
+        if (isStillPlaying) {
+          turnCompleteReceivedRef.current = true;
+          // While waiting for audio to finish, we keep isSpeaking=true so the UI remains in "assistant speaking" state.
+        } else {
+          setIsSpeaking(false);
+          nextPlayTimeRef.current = 0;
+          if (audioMutedRef.current) {
             audioMutedRef.current = false;
             if (audioMuteTimerRef.current) {
               clearTimeout(audioMuteTimerRef.current);
               audioMuteTimerRef.current = null;
             }
-            nextPlayTimeRef.current = 0;
-          } else {
-            // Audio still playing — let source.onended do the unmute
-            turnCompleteReceivedRef.current = true;
           }
-        } else {
-          nextPlayTimeRef.current = 0;
         }
       }
     } catch (err) {
