@@ -36,10 +36,6 @@ EXERCISE_PHASES = [
 
 TOTAL_EXERCISES = 14
 
-# Global progress store — run_live mode may not propagate session state reliably.
-# Key: user_id, Value: last logged exercise_number (1-14)
-EXERCISE_PROGRESS: dict[str, int] = {}
-
 # Ordered list for get_next_exercise
 EXERCISE_LIST = [
     ("Box Breathing", 35),
@@ -67,12 +63,22 @@ def get_next_exercise(last_completed_number: int, tool_context=None) -> dict:
     """
     _dbg("get_next_exercise", "entry", {"last_completed_number": last_completed_number}, "H1")
     uid = _get_user_id(tool_context)
-    highest_logged = EXERCISE_PROGRESS.get(uid, 0)
-    # Guardrail: never go backwards. If agent passes a smaller number than already logged,
-    # use the highest so we always advance through the list (avoids Box Breathing loop).
+    
+    # Persistent State: rely on Firestore if available
+    fs = FirestoreService.get_instance()
+    highest_logged = 0
+    if fs.is_available:
+        try:
+            highest_logged = fs.get_exercise_progress_sync(uid)
+            _dbg("get_next_exercise", "firestore_read", {"uid": uid, "highest_logged": highest_logged})
+        except Exception as e:
+            _dbg("get_next_exercise", "firestore_error", {"error": str(e)})
+
+    # Guardrail: never go backwards. 
     effective_last = max(last_completed_number, highest_logged)
     if effective_last >= TOTAL_EXERCISES:
         return {"next": None, "message": "Session complete. Call complete_exercise_session."}
+    
     idx = effective_last  # 0-based index into EXERCISE_LIST
     name, duration = EXERCISE_LIST[idx]
     out = {"exercise_name": name, "exercise_number": idx + 1, "duration_seconds": duration, "message": f"Next: {name} ({duration}s). Introduce this one — do not skip."}
@@ -143,7 +149,8 @@ def wait_for_user_confirmation(tool_context=None) -> dict:
     _dbg("wait_for_user_confirmation", "called", {}, "H2")
     return {
         "status": "waiting",
-        "message": "STOP SPEAKING NOW. End your turn. Do not say another word. Wait for the user to say yes, ready, or let's go. When they do, call log_exercise_progress(exercise_name, exercise_number, notes) for the exercise you just completed, then get_next_exercise(last_completed) to get the NEXT exercise, and introduce that new exercise once.",
+        "stop_speaking": True,
+        "message": "STOP SPEAKING NOW. End your turn. Do not say another word. Wait for the user to say yes, ready, or let's go. When they do, call log_exercise_progress(...) for the exercise you just completed, then get_next_exercise(last_completed) to get the NEXT exercise, and introduce that new exercise once.",
     }
 
 
@@ -156,21 +163,19 @@ def start_exercise_session(tool_context=None) -> dict:
     session_id = str(uuid.uuid4())[:8]
     now = datetime.now(timezone.utc)
 
-    session_data = {
-        "session_id": session_id,
-        "started_at": now.isoformat(),
-        "completed_at": None,
-        "duration_minutes": 0,
-        "exercises": [],
-        "posture_score": 0,
-    }
-
     # Store session_id in state for subsequent tool calls
     uid = _get_user_id(tool_context)
     if tool_context and hasattr(tool_context, "state"):
         tool_context.state["exercise_session_id"] = session_id
         tool_context.state["exercises_completed"] = 0  # no exercises logged yet
-    EXERCISE_PROGRESS[uid] = 0  # run_live: session state may not propagate
+    
+    # Persistent Reset
+    fs = FirestoreService.get_instance()
+    if fs.is_available:
+        try:
+            fs.save_exercise_progress_sync(uid, 0)
+        except Exception:
+            pass
 
     emit_ui_update("exercise_session_started", {
         "session_id": session_id,
@@ -197,7 +202,15 @@ def log_exercise_progress(
     uid = _get_user_id(tool_context)
     if tool_context and hasattr(tool_context, "state"):
         tool_context.state["exercises_completed"] = exercise_number
-    EXERCISE_PROGRESS[uid] = exercise_number
+    
+    # Persistent Save
+    fs = FirestoreService.get_instance()
+    if fs.is_available:
+        try:
+            fs.save_exercise_progress_sync(uid, exercise_number)
+        except Exception:
+            pass
+            
     phase = _get_phase_for_exercise(exercise_number)
 
     emit_ui_update("exercise_pose_change", {
@@ -220,16 +233,20 @@ def complete_exercise_session(
     overall_posture_notes: str = "",
     tool_context=None,
 ) -> dict:
-    """Finalize the session with summary. Call after the last exercise OR when the user interrupts to stop.
-
-    Use when: (a) user completes exercise 14 (Final Relaxation), or (b) user says "stop", "end session",
-    "that's enough", etc. mid-session. Provide the ACTUAL count of exercises completed — never use 14
-    unless you actually coached all 14. If you only did Box Breathing, use 1.
-    """
+    """Finalize the session with summary. Call after the last exercise OR when the user interrupts to stop."""
     _dbg("complete_exercise_session", "entry", {"exercises_completed": exercises_completed}, "H4")
     session_id = None
     uid = _get_user_id(tool_context)
-    last_logged = EXERCISE_PROGRESS.get(uid, 0)  # run_live: use global store
+    
+    # Persistent Load
+    fs = FirestoreService.get_instance()
+    last_logged = 0
+    if fs.is_available:
+        try:
+            last_logged = fs.get_exercise_progress_sync(uid)
+        except Exception:
+            pass
+            
     if tool_context and hasattr(tool_context, "state"):
         last_logged = max(last_logged, tool_context.state.get("exercises_completed", 0))
         session_id = tool_context.state.get("exercise_session_id")

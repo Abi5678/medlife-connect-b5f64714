@@ -144,6 +144,20 @@ class FirestoreService:
         _, ref = self._sync_user_ref(user_id).collection("call_logs").add(log)
         return ref.id
 
+    def get_exercise_progress_sync(self, user_id: str) -> int:
+        """Get the last completed exercise number (sync)."""
+        doc = self._sync_user_ref(user_id).collection("exercise_session_state").document("current").get()
+        if doc.exists:
+            return doc.to_dict().get("last_completed", 0)
+        return 0
+
+    def save_exercise_progress_sync(self, user_id: str, last_completed: int) -> None:
+        """Save the last completed exercise number (sync)."""
+        self._sync_user_ref(user_id).collection("exercise_session_state").document("current").set(
+            {"last_completed": last_completed, "updated_at": datetime.now(timezone.utc)},
+            merge=True
+        )
+
     # ------------------------------------------------------------------
     # Patient Profile
     # ------------------------------------------------------------------
@@ -646,3 +660,17 @@ class FirestoreService:
             entry["id"] = doc.id
             results.append(entry)
         return results
+
+    async def get_exercise_progress(self, user_id: str) -> int:
+        """Get the last completed exercise number."""
+        doc = await self._user_ref(user_id).collection("exercise_session_state").document("current").get()
+        if doc.exists:
+            return doc.to_dict().get("last_completed", 0)
+        return 0
+
+    async def save_exercise_progress(self, user_id: str, last_completed: int) -> None:
+        """Save the last completed exercise number."""
+        await self._user_ref(user_id).collection("exercise_session_state").document("current").set(
+            {"last_completed": last_completed, "updated_at": datetime.now(timezone.utc)},
+            merge=True
+        )
