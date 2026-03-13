@@ -31,6 +31,7 @@ steps:
       - "--build-arg=VITE_FIREBASE_MESSAGING_SENDER_ID=479757625763"
       - "--build-arg=VITE_FIREBASE_APP_ID=1:479757625763:web:61c5299bf510e2b3c3d216"
       - "--build-arg=VITE_BACKEND_HOST=medlive-zjp5lygwpa-uc.a.run.app"
+      - "--build-arg=CACHEBUST=$(date +%s)"
       - "."
     timeout: "1200s"   # 20 min for Node install + Python deps
 

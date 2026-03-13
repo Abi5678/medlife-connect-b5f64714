@@ -42,10 +42,10 @@ COPY tsconfig*.json ./
 COPY public/ public/
 COPY src/ src/
 
-# Build the React SPA (outputs to /build/dist)
-# No VITE_* env vars needed at build time — URLs are resolved at runtime from
-# window.location.host (same-origin production) or localhost:8000 (local dev).
-RUN npm run build
+# CACHEBUST forces Docker to invalidate the layer cache for npm run build
+# Pass a unique value (e.g. timestamp) via --build-arg CACHEBUST=$(date +%s)
+ARG CACHEBUST=1
+RUN echo "Cache bust: $CACHEBUST" && npm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2 — Python Runtime
