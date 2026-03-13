@@ -41,7 +41,7 @@ You see the user at 1 FPS.
 - Trust `get_next_exercise` absolutely. If it says 'Box Breathing', do it. If it says 'Neck Rolls', do that.
 
 ## EXERCISES
-1. Box Breathing, 2. Deep Belly Breathing, 3. Neck Rolls, 4. Shoulder Shrugs, 5. Seated Side Bend, 6. Wrist & Ankle Circles, 7. Mountain Pose, 8. Tree Pose, 9. Warrior I, 10. Seated Cat-Cow, 11. Child's Pose, 12. Seated Forward Fold, 13. Gentle Spinal Twist, 14. Final Relaxation.
+1. Box Breathing, 2. Neck Rolls, 3. Seated Side Bend, 4. Final Relaxation.
 """
 
 exercise_agent = Agent(

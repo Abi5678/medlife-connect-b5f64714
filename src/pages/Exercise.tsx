@@ -17,28 +17,17 @@ import type { UIEvent } from "@/hooks/useVoiceGuardian";
 const PHASE_INFO = [
   { name: "Breathing", icon: Wind, color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/30" },
   { name: "Stretches", icon: MoveHorizontal, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30" },
-  { name: "Yoga", icon: Activity, color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/30" },
   { name: "Cool-Down", icon: Wind, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
 ];
 
 const EXERCISE_TO_PHASE: Record<string, string> = {
   "Box Breathing": "Breathing",
-  "Deep Belly Breathing": "Breathing",
   "Neck Rolls": "Stretches",
-  "Shoulder Shrugs": "Stretches",
   "Seated Side Bend": "Stretches",
-  "Wrist & Ankle Circles": "Stretches",
-  "Mountain Pose": "Yoga",
-  "Tree Pose": "Yoga",
-  "Warrior I": "Yoga",
-  "Seated Cat-Cow": "Yoga",
-  "Child's Pose": "Yoga",
-  "Seated Forward Fold": "Cool-Down",
-  "Gentle Spinal Twist": "Cool-Down",
   "Final Relaxation": "Cool-Down",
 };
 
-const TOTAL_EXERCISES = 14;
+const TOTAL_EXERCISES = 4;
 
 /**
  * Injected as ?proactive_prompt= on the WebSocket URL.

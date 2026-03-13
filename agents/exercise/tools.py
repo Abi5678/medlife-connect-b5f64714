@@ -28,29 +28,18 @@ def _dbg(tool: str, message: str, data: dict, hypothesis_id: str = ""):
 
 
 EXERCISE_PHASES = [
-    {"phase": "Breathing", "exercises": ["Box Breathing", "Deep Belly Breathing"]},
-    {"phase": "Stretches", "exercises": ["Neck Rolls", "Shoulder Shrugs", "Seated Side Bend", "Wrist & Ankle Circles"]},
-    {"phase": "Yoga", "exercises": ["Mountain Pose", "Tree Pose", "Warrior I", "Seated Cat-Cow", "Child's Pose"]},
-    {"phase": "Cool-Down", "exercises": ["Seated Forward Fold", "Gentle Spinal Twist", "Final Relaxation"]},
+    {"phase": "Breathing", "exercises": ["Box Breathing"]},
+    {"phase": "Stretches", "exercises": ["Neck Rolls", "Seated Side Bend"]},
+    {"phase": "Cool-Down", "exercises": ["Final Relaxation"]},
 ]
 
-TOTAL_EXERCISES = 14
+TOTAL_EXERCISES = 4
 
 # Ordered list for get_next_exercise
 EXERCISE_LIST = [
     ("Box Breathing", 35),
-    ("Deep Belly Breathing", 60),
     ("Neck Rolls", 30),
-    ("Shoulder Shrugs", 30),
     ("Seated Side Bend", 60),
-    ("Wrist & Ankle Circles", 60),
-    ("Mountain Pose", 30),
-    ("Tree Pose", 45),
-    ("Warrior I", 45),
-    ("Seated Cat-Cow", 30),
-    ("Child's Pose", 30),
-    ("Seated Forward Fold", 30),
-    ("Gentle Spinal Twist", 30),
     ("Final Relaxation", 60),
 ]
 
