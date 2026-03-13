@@ -10,7 +10,7 @@ terraform {
 
   # Optional: store state in GCS for team collaboration
   # backend "gcs" {
-  #   bucket = "heali-488722-tf-state"
+  #   bucket = "medlive-488722-tf-state"
   #   prefix = "heali/state"
   # }
 }

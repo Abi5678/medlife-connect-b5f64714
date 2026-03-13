@@ -2,7 +2,7 @@
 # Firestore — Native mode database
 # Note: Only one Firestore database per project is supported in the default mode.
 # If already created via console/gcloud, import it:
-#   terraform import google_firestore_database.default projects/heali-488722/databases/(default)
+#   terraform import google_firestore_database.default projects/medlive-488722/databases/(default)
 # ---------------------------------------------------------------------------
 resource "google_firestore_database" "default" {
   project     = var.project_id

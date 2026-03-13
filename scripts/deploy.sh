@@ -17,7 +17,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via env vars or --project flag)
 # ---------------------------------------------------------------------------
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-heali-488722}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-medlive-488722}"
 REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
 SERVICE_NAME="heali"
 IMAGE="gcr.io/${PROJECT_ID}/${SERVICE_NAME}"

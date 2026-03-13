@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 
 # Import existing secrets (created by setup_gcp.sh)
-# To import: terraform import google_secret_manager_secret.google_api_key projects/heali-488722/secrets/heali-google-api-key
+# To import: terraform import google_secret_manager_secret.google_api_key projects/medlive-488722/secrets/heali-google-api-key
 resource "google_secret_manager_secret" "google_api_key" {
   secret_id = "heali-google-api-key"
   project   = var.project_id

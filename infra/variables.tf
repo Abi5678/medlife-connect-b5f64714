@@ -1,7 +1,7 @@
 variable "project_id" {
   description = "GCP project ID"
   type        = string
-  default     = "heali-488722"
+  default     = "medlive-488722"
 }
 
 variable "region" {
@@ -19,7 +19,7 @@ variable "service_name" {
 variable "image" {
   description = "Container image URI (gcr.io/<project>/<service>)"
   type        = string
-  default     = "gcr.io/heali-488722/heali"
+  default     = "gcr.io/medlive-488722/heali"
 }
 
 variable "gemini_model" {

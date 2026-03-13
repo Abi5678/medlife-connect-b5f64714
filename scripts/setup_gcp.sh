@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-heali-488722}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-medlive-488722}"
 REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
 
 echo "🚀 Heali GCP Setup — project: ${PROJECT_ID}, region: ${REGION}"
