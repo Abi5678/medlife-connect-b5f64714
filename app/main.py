@@ -1296,11 +1296,19 @@ async def approve_dietary_plan(plan_id: str):
 # ---------------------------------------------------------------------------
 
 REACT_DIR = Path(__file__).parent.parent / "dist"
+# Also check /app/dist as a fallback for Cloud Run container path
+if not REACT_DIR.exists():
+    REACT_DIR = Path("/app/dist")
+
+logger.info("React dist dir: %s (exists=%s)", REACT_DIR, REACT_DIR.exists())
+
 if REACT_DIR.exists():
     # Serve static assets (JS, CSS, images) from Vite build
     _assets_dir = REACT_DIR / "assets"
+    logger.info("Assets dir: %s (exists=%s)", _assets_dir, _assets_dir.exists())
     if _assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="react-assets")
+        logger.info("Mounted /assets from %s", _assets_dir)
 
     @app.get("/{full_path:path}")
     async def serve_react(full_path: str):
