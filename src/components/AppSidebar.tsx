@@ -76,18 +76,14 @@ const AppSidebar = () => {
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         } ${collapsed ? "w-[72px]" : "w-64"}`}
       >
-        {/* Logo */}
-        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sidebar-primary">
-              <Heart size={16} strokeWidth={1.5} className="text-sidebar-primary-foreground" />
-            </div>
-            {!collapsed && (
-              <span className="font-display text-lg font-bold tracking-tight text-sidebar-primary">
-                Heali
-              </span>
-            )}
-          </div>
+        <div className="flex h-16 items-center border-b border-sidebar-border px-4">
+          <NavLink to="/" className="flex items-center gap-2.5 overflow-hidden">
+            <img 
+              src="/heali-logo.png" 
+              alt="Heali" 
+              className={`h-8 transition-all duration-200 ${collapsed ? "w-8 object-left" : "w-auto"}`}
+            />
+          </NavLink>
           <button
             onClick={() => {
               setCollapsed(!collapsed);

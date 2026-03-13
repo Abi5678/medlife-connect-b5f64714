@@ -225,12 +225,16 @@ const Onboarding = () => {
             exit={{ opacity: 0, y: -20 }}
             className="max-w-lg text-center"
           >
-            <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-primary/10">
-              <Sparkles size={36} className="text-primary" />
+            <div className="mx-auto mb-6 flex flex-col items-center">
+              <img 
+                src="/heali-logo.png" 
+                alt="Heali" 
+                className="h-20 w-auto mb-4"
+              />
+              <h1 className="font-display text-4xl font-bold tracking-tight lg:text-5xl">
+                Welcome to Heali
+              </h1>
             </div>
-            <h1 className="font-display text-4xl font-bold tracking-tight lg:text-5xl">
-              Welcome to <em className="text-primary">Heali</em>
-            </h1>
             <p className="mt-4 text-lg text-muted-foreground">
               Your AI health guardian that speaks your language, sees your pills, and knows your name.
             </p>

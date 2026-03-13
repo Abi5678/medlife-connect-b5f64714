@@ -62,11 +62,13 @@ const Login = () => {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-sm"
       >
-        <div className="mb-8 text-center">
-          <h1 className="font-display text-4xl font-bold tracking-tight">
-            <em className="text-primary">Heali</em>
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+        <div className="mb-8 text-center flex flex-col items-center">
+          <img 
+            src="/heali-logo.png" 
+            alt="Heali" 
+            className="h-16 w-auto mb-2"
+          />
+          <p className="text-sm text-muted-foreground">
             {isSignUp ? "Create your account" : "Sign in to your health companion"}
           </p>
         </div>
