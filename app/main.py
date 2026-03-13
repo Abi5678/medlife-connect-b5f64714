@@ -1006,35 +1006,43 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
                         # Use macOS native 'say' command for zero-dependency, free, offline TTS
                         # to bypass Gemini Native Audio's inability to read text inputs.
-                        # --file-format=WAVE is required: without it 'say' produces AIFF
-                        # even with a .wav extension, causing wave.open() to fail silently.
-                        with tempfile.NamedTemporaryFile(suffix=".wav") as f:
-                            subprocess.run(
-                                [
-                                    "say", "-o", f.name,
-                                    "--data-format=LEI16@16000",
-                                    "--file-format=WAVE",
-                                    user_text,
-                                ],
-                                check=True
-                            )
-                            with wave.open(f.name, "rb") as w:
-                                pcm_audio = w.readframes(w.getnframes())
+                        # On Linux (Cloud Run), we log a warning as 'say' is unavailable.
+                        import shutil
+                        if shutil.which("say"):
+                            with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+                                subprocess.run(
+                                    [
+                                        "say", "-o", f.name,
+                                        "--data-format=LEI16@16000",
+                                        "--file-format=WAVE",
+                                        user_text,
+                                    ],
+                                    check=True
+                                )
+                                with wave.open(f.name, "rb") as w:
+                                    pcm_audio = w.readframes(w.getnframes())
 
-                        live_request_queue.send_realtime(
-                            types.Blob(
-                                mime_type="audio/pcm;rate=16000",
-                                data=pcm_audio,
+                            live_request_queue.send_realtime(
+                                types.Blob(
+                                    mime_type="audio/pcm;rate=16000",
+                                    data=pcm_audio,
+                                )
                             )
-                        )
-                        # Pad with 500 ms of silence so VAD detects end-of-speech
-                        # and triggers model inference. Without this the model may
-                        # never see the end-of-turn boundary after short TTS clips.
-                        _silence = bytes(int(16000 * 0.5) * 2)  # 500 ms @ 16kHz 16-bit mono
-                        live_request_queue.send_realtime(
-                            types.Blob(mime_type="audio/pcm;rate=16000", data=_silence)
-                        )
-                        logger.info("Synthesized %d bytes of PCM audio from text using macOS 'say' and sent to Gemini (+ 500ms silence pad)", len(pcm_audio))
+                            # Pad with 500 ms of silence so VAD detects end-of-speech
+                            # and triggers model inference. Without this the model may
+                            # never see the end-of-turn boundary after short TTS clips.
+                            _silence = bytes(int(16000 * 0.5) * 2)  # 500 ms @ 16kHz 16-bit mono
+                            live_request_queue.send_realtime(
+                                types.Blob(mime_type="audio/pcm;rate=16000", data=_silence)
+                            )
+                            logger.info("Synthesized %d bytes of PCM audio from text using macOS 'say' and sent to Gemini (+ 500ms silence pad)", len(pcm_audio))
+                        else:
+                            logger.warning("TTS 'say' command not found. Sending raw text to Gemini (may be ignored by native-audio model).")
+                            # Fallback: send as text contents even if native-audio model ignores it
+                            # This at least keeps the session history intact for the next turn.
+                            live_request_queue.send_content(
+                                types.Content(role="user", parts=[types.Part(text=user_text)])
+                            )
                     except Exception as e:
                         logger.error("TTS conversion failed for text input: %s", e)
 
