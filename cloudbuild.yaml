@@ -11,7 +11,7 @@ substitutions:
   _PROJECT_ID: "medlive-488722"
   _REGION: "us-central1"
   _SERVICE_NAME: "medlive"
-  _IMAGE: "gcr.io/${_PROJECT_ID}/${_SERVICE_NAME}"
+  _IMAGE: "gcr.io/medlive-488722/medlive"
 
 steps:
   # ---------------------------------------------------------------------------
@@ -69,8 +69,8 @@ steps:
       - "--project=${_PROJECT_ID}"
 
 images:
-  - "${_IMAGE}:$BUILD_ID"
-  - "${_IMAGE}:latest"
+  - "gcr.io/medlive-488722/medlive:$BUILD_ID"
+  - "gcr.io/medlive-488722/medlive:latest"
 
 timeout: "2400s"   # 40 min total pipeline timeout
 
