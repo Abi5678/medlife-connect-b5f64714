@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ArrowRight, ArrowLeft, Wand2, Loader2, Upload, User } from "lucide-react";
+import { Sparkles, ArrowRight, ArrowLeft, Loader2, Upload, User } from "lucide-react";
 import { useRef } from "react";
-import { PRESET_PERSONAS, Persona, saveOnboardingState } from "@/lib/personas";
+import { HEALI_VOICES, Persona, saveOnboardingState } from "@/lib/personas";
 import { saveProfile, generateAvatar } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -31,7 +31,7 @@ const Onboarding = () => {
       ? initialStep
       : "welcome";
   });
-  const [selected, setSelected] = useState<Persona | null>(null);
+  const [selected, setSelected] = useState<Persona | null>(() => HEALI_VOICES[0]);
   const [customName, setCustomName] = useState("");
   const [customDescription, setCustomDescription] = useState("");
   const [customAvatar, setCustomAvatar] = useState<string | null>(null);
@@ -51,6 +51,7 @@ const Onboarding = () => {
   const [emergencyPhone, setEmergencyPhone] = useState("");
   const [bloodType, setBloodType] = useState("");
   const [primaryDoctor, setPrimaryDoctor] = useState("");
+  const [fillingWithAgent, setFillingWithAgent] = useState(false);
 
   const handleSelectPreset = (persona: Persona) => {
     setSelected(persona);
@@ -168,6 +169,46 @@ const Onboarding = () => {
     setStep("confirm");
   };
 
+  /** Save only voice/companion, then redirect to Voice Guardian; backend will hand off to Onboarding Specialist. */
+  const handleFillWithAgent = async () => {
+    if (!selected) return;
+    setFillingWithAgent(true);
+    try {
+      let avatarB64: string | undefined;
+      if (selected.id !== "custom" && selected.avatar) {
+        try {
+          avatarB64 = await imageUrlToBase64(selected.avatar);
+        } catch (e) {
+          console.warn("Failed to convert preset avatar to base64:", e);
+        }
+      } else if (selected.id === "custom" && customAvatar) {
+        avatarB64 = customAvatar;
+      }
+      const token = await getIdToken();
+      if (token) {
+        await saveProfile(
+          {
+            companion_name: selected.name,
+            language: selected.language,
+            ...(selected.voiceName && { voice_name: selected.voiceName }),
+            ...(avatarB64 && { avatar_b64: avatarB64 }),
+          },
+          token,
+        );
+      }
+      saveOnboardingState({
+        persona: selected,
+        customAvatar: selected.id === "custom" ? customAvatar || undefined : undefined,
+        completed: false,
+      });
+      navigate("/voice", { state: { fromOnboardingAgentChoice: true } });
+    } catch (e) {
+      console.error("Failed to save profile for Onboarding Specialist", e);
+    } finally {
+      setFillingWithAgent(false);
+    }
+  };
+
   const handleFinish = async () => {
     if (!selected) return;
 
@@ -198,7 +239,8 @@ const Onboarding = () => {
           companion_name: selected.name,
           language: selected.language,
           avatar_b64: selected.id === "custom" ? customAvatar : presetAvatarB64,
-          user_avatar_b64: userAvatar || undefined
+          user_avatar_b64: userAvatar || undefined,
+          ...(selected.voiceName && { voice_name: selected.voiceName }),
         }, token);
       }
     } catch (e) {
@@ -273,53 +315,37 @@ const Onboarding = () => {
               <ArrowLeft size={14} /> Back
             </button>
             <h2 className="font-display text-3xl font-bold tracking-tight">
-              Choose your <em className="text-primary">companion</em>
+              Find your perfect <em className="text-primary">Heali</em>
             </h2>
             <p className="mt-2 mb-8 text-muted-foreground">
-              Pick a persona or create your own custom companion.
+              Pick a voice to get started.
             </p>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {PRESET_PERSONAS.map((persona) => (
+              {HEALI_VOICES.map((voice) => (
                 <button
-                  key={persona.id}
-                  onClick={() => handleSelectPreset(persona)}
-                  className="group flex items-start gap-4 rounded-lg border border-border bg-card p-5 text-left transition-all duration-150 hover:border-primary hover:shadow-md"
+                  key={voice.id}
+                  type="button"
+                  onClick={() => handleSelectPreset(voice)}
+                  className={`group flex items-start gap-4 rounded-lg border-2 bg-card p-5 text-left transition-all duration-150 hover:border-primary hover:shadow-md ${
+                    selected?.id === voice.id ? "border-primary shadow-md" : "border-border"
+                  }`}
                 >
-                  <img
-                    src={persona.avatar}
-                    alt={persona.name}
-                    className="h-16 w-16 shrink-0 rounded-full border-2 border-border object-cover transition-all group-hover:border-primary"
-                  />
+                  <div className="relative shrink-0 rounded-full">
+                    <img
+                      src={voice.avatar}
+                      alt={voice.name}
+                      className="h-16 w-16 rounded-full border-2 border-border object-cover transition-all group-hover:border-primary"
+                    />
+                  </div>
                   <div className="min-w-0">
-                    <h3 className="font-display text-lg font-bold">{persona.name}</h3>
+                    <h3 className="font-display text-lg font-bold">{voice.name}</h3>
                     <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                      {persona.title} · {persona.language}
+                      {voice.title}
                     </p>
-                    <p className="mt-1.5 text-sm text-muted-foreground">{persona.description}</p>
-                    <p className="mt-2 text-sm italic text-foreground/70">"{persona.greeting}"</p>
                   </div>
                 </button>
               ))}
-
-              {/* Custom option */}
-              <button
-                onClick={() => setStep("custom")}
-                className="group flex items-start gap-4 rounded-lg border-2 border-dashed border-border bg-card p-5 text-left transition-all duration-150 hover:border-primary hover:shadow-md"
-              >
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-muted-foreground/30 transition-all group-hover:border-primary">
-                  <Wand2 size={24} className="text-muted-foreground transition-colors group-hover:text-primary" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="font-display text-lg font-bold">Create Your Own</h3>
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                    Custom · Any Language
-                  </p>
-                  <p className="mt-1.5 text-sm text-muted-foreground">
-                    Describe your ideal health companion and we'll bring them to life with AI.
-                  </p>
-                </div>
-              </button>
             </div>
           </motion.div>
         )}
@@ -340,10 +366,10 @@ const Onboarding = () => {
               <ArrowLeft size={14} /> Back
             </button>
             <h2 className="font-display text-3xl font-bold tracking-tight">
-              Create your <em className="text-primary">companion</em>
+              Create your <em className="text-primary">Heali</em>
             </h2>
             <p className="mt-2 mb-8 text-muted-foreground">
-              Describe your ideal health companion — personality, appearance, anything.
+              Describe your ideal Heali — personality, appearance, anything.
             </p>
 
             <div className="space-y-4">
@@ -452,9 +478,36 @@ const Onboarding = () => {
             <h2 className="font-display text-3xl font-bold tracking-tight">
               A bit about <em className="text-primary">you</em>
             </h2>
-            <p className="mt-2 mb-8 text-muted-foreground">
+            <p className="mt-2 mb-4 text-muted-foreground">
               So {selected?.name} knows how to assist you and safely suggest recipes.
             </p>
+            <p className="mb-4 text-sm text-muted-foreground">
+              How would you like to add your details?
+            </p>
+            <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:gap-4">
+              <button
+                type="button"
+                onClick={() => {}}
+                className="flex-1 rounded-lg border-2 border-primary bg-primary/10 px-4 py-3 font-mono text-sm uppercase tracking-widest text-foreground transition-colors hover:bg-primary/20"
+              >
+                Fill in the form now
+              </button>
+              <button
+                type="button"
+                onClick={handleFillWithAgent}
+                disabled={fillingWithAgent}
+                className="flex-1 rounded-lg border-2 border-border bg-card px-4 py-3 font-mono text-sm uppercase tracking-widest text-foreground transition-colors hover:border-primary hover:bg-secondary disabled:opacity-50"
+              >
+                {fillingWithAgent ? (
+                  <>
+                    <Loader2 size={14} className="mr-2 inline animate-spin" />
+                    Starting…
+                  </>
+                ) : (
+                  "Do it with the Onboarding Specialist"
+                )}
+              </button>
+            </div>
 
             <div className="space-y-4">
               <div className="flex flex-col items-center justify-center mb-6">

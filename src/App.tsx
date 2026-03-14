@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { getOnboardingState } from "@/lib/personas";
 import Welcome from "./pages/Welcome";
@@ -37,7 +37,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 function RequireOnboarding({ children }: { children: React.ReactNode }) {
   const { completed } = getOnboardingState();
-  if (!completed) return <Navigate to="/onboarding" replace />;
+  const location = useLocation();
+  // Allow /voice when not completed so "Do it with the Onboarding Specialist" can open Voice Guardian; backend will hand off to onboarding agent.
+  if (!completed && location.pathname !== "/voice") return <Navigate to="/onboarding" replace />;
   return <>{children}</>;
 }
 

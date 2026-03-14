@@ -699,6 +699,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         "Dr. Priya": "avatar-dr-priya.png",
         "Enfermera Elena": "avatar-elena.png",
         "Nurse Maya": "avatar-nurse-maya.png",
+        "Heali (Balanced)": "heali_balanced.png",
+        "Heali (Calm)": "heali_calm.png",
+        "Heali (Energetic)": "heali_energetic.png",
+        "Heali (Informative)": "heali_informative.png",
     }
     avatar_b64 = None
     assets_dir = Path(__file__).parent.parent / "src" / "assets"
@@ -1088,6 +1092,20 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 from agents.booking.tools import BOOKING_UI_QUEUE
                 booking_events = BOOKING_UI_QUEUE.pop(uid, [])
                 ui_events.extend(booking_events)
+
+                # Dedupe: same medication_logged/medication_taken in one batch → send only last
+                _seen_med_key: set[tuple[str, str]] = set()
+                _deduped: list[dict] = []
+                for ev in reversed(ui_events):
+                    t = ev.get("target")
+                    if t in ("medication_logged", "medication_taken"):
+                        data = ev.get("data") or {}
+                        key = (t, str(data.get("medication_name") or data.get("name") or data.get("medication") or ""))
+                        if key in _seen_med_key:
+                            continue
+                        _seen_med_key.add(key)
+                    _deduped.append(ev)
+                ui_events = list(reversed(_deduped))
 
                 if ui_events:
                     logger.info(f"Found {len(ui_events)} UI events to dispatch")

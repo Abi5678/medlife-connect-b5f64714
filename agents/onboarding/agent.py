@@ -5,7 +5,6 @@ from agents.shared.constants import LIVE_MODEL
 from agents.shared.prompts import ONBOARDING_AGENT_INSTRUCTION
 from agents.onboarding.tools import (
     restart_onboarding,
-    update_session_voice,
     emit_ui_update,
     complete_onboarding_and_save,
 )
@@ -17,7 +16,6 @@ onboarding_agent = Agent(
     instruction=ONBOARDING_AGENT_INSTRUCTION,
     tools=[
         restart_onboarding,
-        update_session_voice,
         emit_ui_update,
         complete_onboarding_and_save,
     ],

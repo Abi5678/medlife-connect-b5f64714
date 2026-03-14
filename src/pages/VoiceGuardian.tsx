@@ -423,7 +423,20 @@ const VoiceGuardian = () => {
       }
     }
     pushUIEvent(event);
-    setUIEvents((prev) => [...prev, event]);
+    setUIEvents((prev) => {
+      const target = event.target;
+      if (target === "medication_logged" || target === "medication_taken") {
+        const data = (event.data ?? {}) as Record<string, unknown>;
+        const medKey = String(data?.medication_name ?? data?.name ?? data?.medication ?? "");
+        const last = prev[prev.length - 1];
+        if (last?.target === target) {
+          const lastData = (last.data ?? {}) as Record<string, unknown>;
+          const lastKey = String(lastData?.medication_name ?? lastData?.name ?? lastData?.medication ?? "");
+          if (lastKey === medKey) return prev;
+        }
+      }
+      return [...prev, event];
+    });
     if (event.target === "pill_verified") {
       const data = (event.data ?? event) as Record<string, unknown>;
       toast({

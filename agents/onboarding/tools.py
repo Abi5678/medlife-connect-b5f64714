@@ -54,6 +54,14 @@ async def update_session_voice(voice_name: str, tool_context=None) -> dict:
 from agents.shared.ui_tools import emit_ui_update
 
 
+def _is_skip_or_empty(s: str) -> bool:
+    """True if the value is empty/whitespace or an explicit skip token."""
+    if not s or not str(s).strip():
+        return True
+    t = str(s).strip().lower()
+    return t in ("skip", "none", "n/a", "no", "declined", "na")
+
+
 async def complete_onboarding_and_save(name: str, language: str, allergies: list[str], diet: str, emergency_contact_name: str, emergency_contact_phone: str, current_medications: str = "", tool_context=None) -> dict:
     """Saves the user's completed profile and triggers handoff.
 
@@ -63,22 +71,36 @@ async def complete_onboarding_and_save(name: str, language: str, allergies: list
     provided or declined each item.
     """
     try:
+        # Guard: require emergency contact unless user explicitly skipped
+        name_ok = bool(emergency_contact_name and str(emergency_contact_name).strip())
+        phone_ok = bool(emergency_contact_phone and str(emergency_contact_phone).strip())
+        both_skipped = _is_skip_or_empty(emergency_contact_name) and _is_skip_or_empty(emergency_contact_phone)
+        if not name_ok and not phone_ok and not both_skipped:
+            return {
+                "status": "error",
+                "message": "You must collect emergency contact name and phone before completing onboarding, or the user must explicitly say they want to skip. Do not call with empty strings. Ask for the contact name and number, or ask 'Would you like to skip adding an emergency contact for now?'",
+            }
+        if not name.strip():
+            return {"status": "error", "message": "Name is required. Do not call with an empty name."}
+        if not language or not str(language).strip():
+            return {"status": "error", "message": "Language is required. Do not call with an empty language."}
+
+        ec_name = "" if _is_skip_or_empty(emergency_contact_name) else str(emergency_contact_name).strip()
+        ec_phone = "" if _is_skip_or_empty(emergency_contact_phone) else str(emergency_contact_phone).strip()
+
         uid = tool_context.state.get("user_id", "demo_user")
         fs = FirestoreService.get_instance()
         
         # 1. Save preferences (including persistent onboarding flag)
         # Use display_name and flat emergency fields so Profile UI matches React onboarding
         profile_data = {
-            "name": name,
-            "display_name": name,
-            "language": language,
+            "name": name.strip(),
+            "display_name": name.strip(),
+            "language": str(language).strip(),
             "onboarding_complete": True,
-            "emergency_contact": [{
-                "name": emergency_contact_name,
-                "phone": emergency_contact_phone
-            }],
-            "emergency_contact_name": emergency_contact_name,
-            "emergency_contact_phone": emergency_contact_phone,
+            "emergency_contact": [{"name": ec_name, "phone": ec_phone}] if ec_name or ec_phone else [],
+            "emergency_contact_name": ec_name,
+            "emergency_contact_phone": ec_phone,
         }
         await fs.save_user_profile(uid, profile_data)
         
@@ -92,9 +114,9 @@ async def complete_onboarding_and_save(name: str, language: str, allergies: list
         if tool_context:
             tool_context.state["onboarding_complete"] = True
             
-            # Inject proactive prompt into the new Agent's context so it speaks immediately
+            # Inject proactive prompt so the Guardian (root) agent speaks immediately after handoff
             live_queue = tool_context.state.get("live_request_queue")
-            if live_queue:
+            if live_queue and getattr(live_queue, "send_content", None):
                 import logging
                 try:
                     from google.genai import types
@@ -104,8 +126,8 @@ async def complete_onboarding_and_save(name: str, language: str, allergies: list
                         "setting any medication reminders or checking vitals right now.]"
                     )
                     content = types.Content(parts=[types.Part(text=greeting_prompt)])
-                    live_queue._queue.put_nowait(content)
-                    logging.info("Injected proactive handoff greeting into the live queue.")
+                    live_queue.send_content(content)
+                    logging.info("Injected proactive handoff greeting via send_content.")
                 except Exception as e:
                     logging.error(f"Failed to push proactive greeting: {e}")
 
