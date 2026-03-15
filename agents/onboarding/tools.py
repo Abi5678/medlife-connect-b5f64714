@@ -33,9 +33,9 @@ async def update_session_voice(voice_name: str, tool_context=None) -> dict:
     logger.info(f"Updating session voice to: {voice_name}")
     try:
         # Save to Firestore so it persists across the impending WS reconnect
-        uid = "demo_user"
-        if tool_context and "user_id" in tool_context.state:
-            uid = tool_context.state["user_id"]
+        uid = tool_context.state.get("user_id") if tool_context else None
+        if not uid:
+            return {"status": "error", "message": "User not authenticated."}
             
         fs = FirestoreService.get_instance()
         await fs.save_user_profile(uid, {"voice_name": voice_name})
@@ -94,7 +94,9 @@ async def complete_onboarding_and_save(name: str, language: str, allergies: list
         ec_name = "" if _is_skip_or_empty(emergency_contact_name) else str(emergency_contact_name).strip()
         ec_phone = "" if _is_skip_or_empty(emergency_contact_phone) else str(emergency_contact_phone).strip()
 
-        uid = tool_context.state.get("user_id", "demo_user")
+        uid = tool_context.state.get("user_id") if tool_context else None
+        if not uid:
+            return {"status": "error", "message": "User not authenticated. Cannot save onboarding data."}
         fs = FirestoreService.get_instance()
         
         # 1. Save preferences (including persistent onboarding flag)

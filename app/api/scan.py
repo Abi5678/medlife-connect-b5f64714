@@ -31,8 +31,8 @@ router = APIRouter(prefix="/api/scan", tags=["scan"])
 
 
 def _skip_auth() -> bool:
-    v = os.getenv("SKIP_AUTH_FOR_TESTING", "true").lower()
-    return v not in ("0", "false", "no")
+    v = os.getenv("SKIP_AUTH_FOR_TESTING", "false").lower()
+    return v in ("1", "true", "yes")
 
 
 def _verify_token(authorization: str | None) -> str:

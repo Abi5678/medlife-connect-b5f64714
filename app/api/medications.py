@@ -23,11 +23,15 @@ def _skip_auth() -> bool:
     return v not in ("0", "false", "no")
 
 
+def _skip_auth() -> bool:
+    v = os.getenv("SKIP_AUTH_FOR_TESTING", "false").lower()
+    return v in ("1", "true", "yes")
+
+
 def _verify_token(authorization: str | None) -> str:
-    """Verify Firebase token; in demo mode (token='demo') return 'demo_user'."""
+    """Verify Firebase token; in demo mode (SKIP_AUTH_FOR_TESTING=true) return 'demo_user'."""
     token = (authorization or "").removeprefix("Bearer ").strip()
-    # Demo mode: token is literally "demo" (set by auth.html when skipAuth=true)
-    if not token or token == "demo":
+    if _skip_auth() and (not token or token == "demo"):
         return "demo_user"
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing auth")

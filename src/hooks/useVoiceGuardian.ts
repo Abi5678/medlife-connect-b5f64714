@@ -61,7 +61,7 @@ export function useVoiceGuardian(options: UseVoiceGuardianOptions = {}) {
   const {
     userId = DEFAULT_USER_ID,
     persona = "en",
-    token = "demo",
+    token = "",
     patientName,
     proactivePrompt,
     exercisesCompleted,
