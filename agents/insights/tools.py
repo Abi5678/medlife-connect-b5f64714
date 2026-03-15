@@ -566,23 +566,26 @@ async def get_patient_history(query: str, tool_context=None) -> dict:
     if _use_firestore(tool_context):
         user_id = _get_user_id(tool_context)
         fs = FirestoreService.get_instance()
-        prescriptions, reports, medications, vitals = await asyncio.gather(
+        prescriptions, reports, medications, vitals, meals = await asyncio.gather(
             fs.get_prescriptions(user_id),
             fs.get_reports(user_id),
             fs.get_medications(user_id),
             fs.get_vitals_log(user_id),
+            fs.get_meals_log(user_id),
         )
     else:
         prescriptions = PRESCRIPTIONS
         reports = REPORTS
         medications = MEDICATIONS
         vitals = VITALS_LOG
+        meals = MEALS_LOG
 
     context_block = {
         "medications": medications,
         "prescriptions": prescriptions[-10:],
         "lab_reports": reports[-10:],
         "recent_vitals": vitals[-30:],
+        "meals_log": meals[-30:],
     }
 
     prompt = (

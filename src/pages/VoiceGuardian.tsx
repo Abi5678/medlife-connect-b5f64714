@@ -515,30 +515,40 @@ const VoiceGuardian = () => {
       if (foodScanInProgress.current) return;
       foodScanInProgress.current = true;
       if (!cameraActive) startCamera();
-      setTimeout(async () => {
-        if (!videoRef.current) {
+      // Poll until the video stream is actually buffered (readyState >= 2), max 5s.
+      // A fixed timeout races against getUserMedia + stream load and often captures
+      // a black frame, causing Gemini to return 0 kcal / empty items.
+      const waitForVideo = (resolve: () => void, reject: () => void, elapsed = 0) => {
+        if (videoRef.current && videoRef.current.readyState >= 2) return resolve();
+        if (elapsed >= 5000) return reject();
+        setTimeout(() => waitForVideo(resolve, reject, elapsed + 100), 100);
+      };
+      new Promise<void>((resolve, reject) => waitForVideo(resolve, reject))
+        .then(async () => {
+          if (!videoRef.current) { foodScanInProgress.current = false; return; }
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { foodScanInProgress.current = false; return; }
+          canvas.width = 640;
+          canvas.height = 480;
+          ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+          const base64Image = dataUrl.split(",")[1];
+          try {
+            const { analyzeFood } = await import("@/lib/api");
+            const result = await analyzeFood(base64Image);
+            sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+          } catch (error) {
+            console.error("Food analysis failed", error);
+            sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
+          } finally {
+            foodScanInProgress.current = false;
+          }
+        })
+        .catch(() => {
+          sendText(`[SYSTEM: Camera not ready. Ask the user to tap the snap button once the camera is showing, or describe the meal instead.]`);
           foodScanInProgress.current = false;
-          return;
-        }
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) { foodScanInProgress.current = false; return; }
-        canvas.width = 640;
-        canvas.height = 480;
-        ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
-        const base64Image = dataUrl.split(",")[1];
-        try {
-          const { analyzeFood } = await import("@/lib/api");
-          const result = await analyzeFood(base64Image);
-          sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
-        } catch (error) {
-          console.error("Food analysis failed", error);
-          sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
-        } finally {
-          foodScanInProgress.current = false;
-        }
-      }, 1500);
+        });
     }
   }, [navigate, pushUIEvent, cameraActive, startCamera, stopCamera, sendText]);
 
@@ -548,6 +558,10 @@ const VoiceGuardian = () => {
 
   const handleFoodSnap = useCallback(async () => {
     if (scanningFood || !videoRef.current) return;
+    if (videoRef.current.readyState < 2) {
+      toast({ title: "Camera not ready", description: "Please wait a moment for the camera to load, then try again." });
+      return;
+    }
     setScanningFood(true);
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
