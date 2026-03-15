@@ -154,8 +154,17 @@ export async function analyzeFood(imageBase64: string) {
   }>(res);
 }
 
+export async function getFoodLogs(uid: string) {
+  const res = await fetch(`${REST_API_BASE_URL}/api/food/logs?uid=${encodeURIComponent(uid)}`, {
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<{
+    logs: Array<{ meal_type?: string; description?: string; food_items?: string[]; calories?: number; protein_g?: number; carbs_g?: number; fat_g?: number; timestamp?: string; date?: string }>;
+  }>(res);
+}
+
 export async function logFood(
-  data: { uid: string; food_items: string[]; calories: number; protein_g: number; carbs_g: number; fat_g: number },
+  data: { uid: string; food_items: string[]; calories: number; protein_g: number; carbs_g: number; fat_g: number; meal_type?: string; description?: string },
 ) {
   const res = await fetch(`${REST_API_BASE_URL}/api/food/log`, {
     method: "POST",

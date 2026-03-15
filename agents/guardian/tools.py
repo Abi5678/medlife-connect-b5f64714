@@ -4,10 +4,24 @@ emergency detection and protocol.
 All tools support Firestore (via tool_context) with mock_data.py fallback.
 """
 
+import asyncio
+import concurrent.futures
 import logging
 import os
 import re
 from datetime import datetime, timezone
+
+
+def _run_async(coro):
+    """Run a coroutine safely regardless of whether an event loop is already running."""
+    try:
+        asyncio.get_running_loop()
+        # Already inside a running loop — offload to a dedicated thread with its own loop
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=30)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 from agents.shared.firestore_service import FirestoreService
 from agents.shared.mock_data import (
@@ -402,17 +416,23 @@ def confirm_and_save_meal(
         user_id = _get_user_id(tool_context)
         from agents.shared.firestore_service import FirestoreService
         fs = FirestoreService.get_instance()
-        # Ensure we're using the correct food log schema
-        import asyncio
-        asyncio.run(fs.add_food_log(user_id, entry))
+        _run_async(fs.add_food_log(user_id, entry))
     else:
-        # Fallback to general meals log just to avoid breaking mock, 
-        # though mock doesn't technically use the new macros schema
-        MEALS_LOG.append(entry)
+        from agents.shared.mock_data import FOOD_LOGS
+        FOOD_LOGS.append(entry)
 
     emit_ui_update(
         "meal_logged",
-        {"description": description, "type": meal_type, 'calories': calories},
+        {
+            "description": description,
+            "type": meal_type,
+            "meal_type": meal_type,
+            "calories": calories,
+            "protein_g": protein_g,
+            "carbs_g": carbs_g,
+            "fat_g": fat_g,
+            "food_items": food_items,
+        },
         tool_context,
     )
 
@@ -457,8 +477,7 @@ def log_symptoms(
     if _use_firestore(tool_context):
         fs = FirestoreService.get_instance()
         try:
-            import asyncio
-            asyncio.run(
+            _run_async(
                 fs.db.collection("users").document(user_id).collection("symptoms").add(entry)
             )
         except Exception as exc:
@@ -531,9 +550,8 @@ def log_otc_medication(
 
     if _use_firestore(tool_context):
         try:
-            import asyncio
             fs = FirestoreService.get_instance()
-            asyncio.run(
+            _run_async(
                 fs.db.collection("users").document(user_id).collection("otc_log").add(entry)
             )
         except Exception as exc:
@@ -670,8 +688,7 @@ def initiate_emergency_protocol(
         from agents.insights.tools import send_family_alert
 
         try:
-            import asyncio
-            asyncio.run(send_family_alert(
+            _run_async(send_family_alert(
                 alert_type="emergency",
                 message=f"EMERGENCY: {symptom_description}. Patient instructed to call {emergency_number}.",
                 tool_context=tool_context,
@@ -879,7 +896,6 @@ def set_health_reminder(
         reminder_time = "0" + reminder_time
         
     try:
-        import asyncio
         # Get current prefs to avoid overwriting unrelated ones
         # For simplicity in this tool, we'll just set the target reminder
         kwargs = {
@@ -902,7 +918,7 @@ def set_health_reminder(
             kwargs["reminder_dinner_enabled"] = True
             kwargs["dinner_reminder_time"] = reminder_time
             
-        asyncio.run(fs.save_reminder_preferences(user_id, **kwargs))
+        _run_async(fs.save_reminder_preferences(user_id, **kwargs))
         
         emit_ui_update(
             "reminder_set",
