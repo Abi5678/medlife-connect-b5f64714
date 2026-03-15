@@ -66,6 +66,9 @@ RUN uv sync --frozen --no-dev
 COPY agents/ agents/
 COPY app/ app/
 
+# Avatar assets — backend reads preset PNGs to send via WebSocket
+COPY src/assets/ src/assets/
+
 # React build output from Stage 1 — FastAPI serves this via catch-all route
 COPY --from=frontend-builder /build/dist ./dist
 

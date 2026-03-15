@@ -113,6 +113,26 @@ class FoodLogRequest(BaseModel):
     protein_g: int
     carbs_g: int
     fat_g: int
+    meal_type: str = "snack"
+    description: str = ""
+
+
+@router.get("/logs")
+async def get_food_logs(uid: str, limit: int = 20):
+    """Returns the most recent food log entries for a patient."""
+    try:
+        from agents.shared.firestore_service import FirestoreService
+
+        fs = FirestoreService.get_instance()
+        if not fs.is_available:
+            from agents.shared.mock_data import FOOD_LOGS
+            return {"logs": FOOD_LOGS[-limit:]}
+
+        logs = await fs.get_food_logs(uid, limit=limit)
+        return {"logs": logs}
+    except Exception as e:
+        logger.error(f"Error fetching food logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/log")

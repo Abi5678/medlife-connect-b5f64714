@@ -34,7 +34,7 @@ interface DashboardData {
   digest: {
     medications: Array<{ name: string; dosage?: string; times?: string[]; status?: string; purpose?: string }>;
     vitals: Array<{ type: string; value: string | number; unit?: string; status?: string }>;
-    meals: Array<{ description?: string; time?: string; meal_type?: string }>;
+    meals: Array<{ description?: string; time?: string; meal_type?: string; calories?: number; protein_g?: number; timestamp?: string }>;
   };
 }
 
@@ -151,9 +151,9 @@ const Dashboard = () => {
     data?.digest?.meals?.length
       ? data.digest.meals.map((m) => ({
           meal: m.meal_type || "Meal",
-          calories: 0,
-          protein: 0,
-          time: m.time || "",
+          calories: m.calories ?? 0,
+          protein: m.protein_g ?? 0,
+          time: m.time || m.timestamp?.split("T")[1]?.substring(0, 5) || "",
         }))
       : FALLBACK_MEALS;
 

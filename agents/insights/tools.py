@@ -18,6 +18,7 @@ from agents.shared.firestore_service import FirestoreService
 from agents.shared.mock_data import (
     ADHERENCE_LOG,
     FAMILY_ALERTS,
+    FOOD_LOGS,
     MEALS_LOG,
     MEDICATIONS,
     PATIENT_PROFILE,
@@ -178,21 +179,23 @@ async def get_daily_digest(tool_context=None) -> dict:
         user_id = _get_user_id(tool_context)
         fs = FirestoreService.get_instance()
         # Run all 4 queries concurrently for performance
-        today_adherence, medications, today_vitals, today_meals = (
+        today_adherence, medications, today_vitals, all_food_logs = (
             await asyncio.gather(
                 fs.get_adherence_log(user_id, since_date=today),
                 fs.get_medications(user_id),
                 fs.get_vitals_log(user_id, since_date=today),
-                fs.get_meals_log(user_id, date=today),
+                fs.get_food_logs(user_id, limit=50),
             )
         )
         # Filter adherence to exact today (since_date is >=, not ==)
         today_adherence = [e for e in today_adherence if e["date"] == today]
+        # Filter food logs to today only
+        today_meals = [m for m in all_food_logs if m.get("date") == today]
     else:
         today_adherence = [e for e in ADHERENCE_LOG if e["date"] == today]
         medications = MEDICATIONS
         today_vitals = [e for e in VITALS_LOG if e["date"] == today]
-        today_meals = [e for e in MEALS_LOG if e["date"] == today]
+        today_meals = [m for m in FOOD_LOGS if m.get("date") == today]
 
     meds_taken = [e["medication"] for e in today_adherence if e["taken"]]
     meds_missed = [e["medication"] for e in today_adherence if not e["taken"]]
@@ -213,7 +216,7 @@ async def get_daily_digest(tool_context=None) -> dict:
             "pending": pending,
         },
         "vitals_recorded": today_vitals,
-        "meals_logged": today_meals,
+        "meals": today_meals,
         "summary": (
             f"Today: {len(meds_taken)} doses taken, {len(meds_missed)} missed, "
             f"{len(pending)} pending. {len(today_vitals)} vital readings. "

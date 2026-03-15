@@ -90,10 +90,19 @@ def _verify_firebase_token(token: str) -> dict:
 
 app = FastAPI(title="Heali", description="Real-time AI Health Guardian")
 
-# CORS: allow React dev server + production origins
+# CORS: allow specific origins — set CORS_ALLOWED_ORIGINS env var for production.
+# Local dev defaults to localhost ports. Multiple origins are comma-separated.
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://localhost:8001",
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,11 +179,9 @@ async def health_check():
 
 
 def _skip_auth_for_testing() -> bool:
-    """True when auth is disabled for testing. Set SKIP_AUTH_FOR_TESTING=0 or false to enable auth."""
-    v = os.getenv("SKIP_AUTH_FOR_TESTING", "true").lower()
-    if v in ("0", "false", "no"):
-        return False
-    return True  # default to skip auth for easier local testing
+    """True when auth is disabled for testing. Set SKIP_AUTH_FOR_TESTING=true (or 1/yes) to bypass auth locally."""
+    v = os.getenv("SKIP_AUTH_FOR_TESTING", "false").lower()
+    return v in ("1", "true", "yes")
 
 
 @app.get("/api/config")
@@ -406,7 +413,7 @@ async def get_dashboard_data(
     # Default fallback data for when Firestore has no records
     _default_adherence = {"taken": 0, "missed": 0, "total_doses": 0, "score": 0, "rating": "No data"}
     _default_trend = {"trend": "stable", "readings": [], "latest_reading": None}
-    _default_digest = {"medications": {"taken": [], "missed": [], "pending": []}, "vitals": [], "meals": []}
+    _default_digest = {"medications": {"taken": [], "missed": [], "pending": []}, "vitals_recorded": [], "meals": []}
 
     # Resolve patient name (Firestore profile → mock data fallback)
     patient_name = _mock_profile.get("name", "")
@@ -1093,9 +1100,11 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 booking_events = BOOKING_UI_QUEUE.pop(uid, [])
                 ui_events.extend(booking_events)
 
-                # Dedupe: same medication_logged/medication_taken in one batch → send only last; profile_preview → at most one
+                # Dedupe: same medication_logged/medication_taken in one batch → send only last; profile_preview → at most one; meal_logged → dedupe by description+type
                 _seen_med_key: set[tuple[str, str]] = set()
+                _seen_meal_key: set[tuple[str, str, str]] = set()
                 _seen_profile_preview = False
+                _seen_food_detected = False
                 _deduped: list[dict] = []
                 for ev in reversed(ui_events):
                     t = ev.get("target")
@@ -1105,6 +1114,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                         if key in _seen_med_key:
                             continue
                         _seen_med_key.add(key)
+                    if t == "meal_logged":
+                        data = ev.get("data") or {}
+                        meal_key = (t, str(data.get("description", "")), str(data.get("type", "")))
+                        if meal_key in _seen_meal_key:
+                            continue
+                        _seen_meal_key.add(meal_key)
+                    if t == "food_detected":
+                        if _seen_food_detected:
+                            continue
+                        _seen_food_detected = True
                     if t == "profile_preview":
                         if _seen_profile_preview:
                             continue

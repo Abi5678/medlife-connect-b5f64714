@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Camera, CameraOff, Upload, Apple, Loader2 } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { analyzeFood, logFood } from "@/lib/api";
+import { analyzeFood, getFoodLogs, logFood } from "@/lib/api";
 import { useUIEvent } from "@/hooks/useUIEventStore";
 import { toast } from "@/hooks/use-toast";
 
@@ -17,14 +17,9 @@ interface MealEntry {
   fat: number;
 }
 
-const FALLBACK_LOG: MealEntry[] = [
-  { meal: "Breakfast", time: "7:30 AM", items: "Oatmeal with berries, green tea", calories: 320, protein: 18, carbs: 45, fat: 8 },
-  { meal: "Lunch", time: "12:15 PM", items: "Grilled chicken salad, whole wheat bread", calories: 480, protein: 24, carbs: 38, fat: 14 },
-];
-
 const FoodLog = () => {
   const { user } = useAuth();
-  const [foodLogEntries, setFoodLogEntries] = useState<MealEntry[]>(FALLBACK_LOG);
+  const [foodLogEntries, setFoodLogEntries] = useState<MealEntry[]>([]);
   const [cameraActive, setCameraActive] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -37,6 +32,30 @@ const FoodLog = () => {
       videoRef.current.srcObject = streamRef.current;
     }
   }, [cameraActive]);
+
+  // Load persisted food logs on mount
+  useEffect(() => {
+    if (!user?.uid) return;
+    getFoodLogs(user.uid)
+      .then(({ logs }) => {
+        if (logs?.length) {
+          setFoodLogEntries(
+            logs.map((m) => ({
+              meal: m.meal_type || "Meal",
+              time: m.timestamp
+                ? new Date(m.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                : "",
+              items: m.description || m.food_items?.join(", ") || "",
+              calories: m.calories ?? 0,
+              protein: m.protein_g ?? 0,
+              carbs: m.carbs_g ?? 0,
+              fat: m.fat_g ?? 0,
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, [user?.uid]);
 
   // Listen for meal_logged events from the voice agent
   const mealEvent = useUIEvent("meal_logged");
@@ -109,14 +128,13 @@ const FoodLog = () => {
           protein_g: result.protein_g,
           carbs_g: result.carbs_g,
           fat_g: result.fat_g,
+          meal_type: "snack",
+          description: result.food_items.join(", "),
         }).catch(() => {});
       }
 
       toast({ title: "Food Analyzed", description: `${result.food_items.join(", ")} \u2014 ${result.calories} kcal` });
-      // Redirect back to guardian after 3 seconds
-      setTimeout(() => {
-        window.location.href = "/voice";
-      }, 3000);
+      stopCamera();
     } catch (err) {
       toast({ variant: "destructive", title: "Analysis Failed", description: String(err) });
     } finally {

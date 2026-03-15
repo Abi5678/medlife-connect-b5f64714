@@ -314,10 +314,12 @@ const VoiceGuardian = () => {
   const [firebaseToken, setFirebaseToken] = useState<string>("demo");
   const [cameraActive, setCameraActive] = useState(false);
   const [uiEvents, setUIEvents] = useState<UIEvent[]>([]);
+  const [scanningFood, setScanningFood] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const foodScanInProgress = useRef(false);
 
   // Stable callback for useVoiceGuardian — delegates to the real handler via ref.
   // Must be defined before useVoiceGuardian since handleUIEventReal depends on sendText/startCamera/stopCamera from the hook.
@@ -510,12 +512,17 @@ const VoiceGuardian = () => {
       });
     }
     if (event.target === "food_detected") {
+      if (foodScanInProgress.current) return;
+      foodScanInProgress.current = true;
       if (!cameraActive) startCamera();
       setTimeout(async () => {
-        if (!videoRef.current) return;
+        if (!videoRef.current) {
+          foodScanInProgress.current = false;
+          return;
+        }
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+        if (!ctx) { foodScanInProgress.current = false; return; }
         canvas.width = 640;
         canvas.height = 480;
         ctx.drawImage(videoRef.current, 0, 0, 640, 480);
@@ -524,11 +531,12 @@ const VoiceGuardian = () => {
         try {
           const { analyzeFood } = await import("@/lib/api");
           const result = await analyzeFood(base64Image);
-          sendText(`[SYSTEM: Food Analysis Complete. Macros: ${result.calories} kcal, ${result.protein_g}g Protein, ${result.carbs_g}g Carbs, ${result.fat_g}g Fat. Items: ${result.food_items.join(", ")}.]`, { silent: true });
-          stopCamera();
+          sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
         } catch (error) {
           console.error("Food analysis failed", error);
-          sendText(`[SYSTEM: Food Analysis Failed. Wait for user to input manually.]`, { silent: true });
+          sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
+        } finally {
+          foodScanInProgress.current = false;
         }
       }, 1500);
     }
@@ -537,6 +545,29 @@ const VoiceGuardian = () => {
   useEffect(() => {
     handleUIEventRef.current = handleUIEventReal;
   }, [handleUIEventReal]);
+
+  const handleFoodSnap = useCallback(async () => {
+    if (scanningFood || !videoRef.current) return;
+    setScanningFood(true);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { setScanningFood(false); return; }
+    canvas.width = 640;
+    canvas.height = 480;
+    ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+    const base64Image = dataUrl.split(",")[1];
+    try {
+      const { analyzeFood } = await import("@/lib/api");
+      const result = await analyzeFood(base64Image);
+      sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+    } catch (error) {
+      console.error("Food snap failed", error);
+      sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
+    } finally {
+      setScanningFood(false);
+    }
+  }, [scanningFood, sendText]);
 
   const toggleCamera = () => {
     if (cameraActive) {
@@ -618,6 +649,23 @@ const VoiceGuardian = () => {
               <div className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-white">
                 LIVE
               </div>
+              {/* Snap button — capture food photo */}
+              <button
+                onClick={handleFoodSnap}
+                disabled={scanningFood}
+                className="absolute bottom-3 left-1/2 -translate-x-1/2 flex h-14 w-14 items-center justify-center rounded-full border-4 border-white bg-white/20 backdrop-blur-sm transition-all hover:bg-white/40 disabled:opacity-50"
+                title="Capture food photo for macro analysis"
+              >
+                {scanningFood ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                    className="h-6 w-6 rounded-full border-2 border-white border-t-transparent"
+                  />
+                ) : (
+                  <Utensils size={20} className="text-white" />
+                )}
+              </button>
             </div>
           )}
 
