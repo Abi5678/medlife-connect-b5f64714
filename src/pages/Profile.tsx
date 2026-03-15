@@ -154,9 +154,7 @@ const Profile = () => {
         {/* Profile card */}
         <div className="rounded-lg bg-primary p-8 text-center text-primary-foreground relative">
           <div className="relative mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-primary-foreground/20 text-3xl font-bold uppercase overflow-hidden">
-            {profile?.avatar_b64 ? (
-              <img src={profile.avatar_b64.startsWith("data:") ? profile.avatar_b64 : `data:image/png;base64,${profile.avatar_b64}`} alt="Companion" className="h-full w-full object-cover" />
-            ) : profile?.user_avatar_b64 ? (
+            {profile?.user_avatar_b64 ? (
               <img src={profile.user_avatar_b64.startsWith("data:") ? profile.user_avatar_b64 : `data:image/jpeg;base64,${profile.user_avatar_b64}`} alt="Avatar" className="h-full w-full object-cover" />
             ) : (
               <span className="font-display">
