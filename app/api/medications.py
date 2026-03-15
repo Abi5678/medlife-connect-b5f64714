@@ -19,11 +19,6 @@ router = APIRouter(prefix="/api/medications", tags=["medications"])
 
 
 def _skip_auth() -> bool:
-    v = os.getenv("SKIP_AUTH_FOR_TESTING", "true").lower()
-    return v not in ("0", "false", "no")
-
-
-def _skip_auth() -> bool:
     v = os.getenv("SKIP_AUTH_FOR_TESTING", "false").lower()
     return v in ("1", "true", "yes")
 
