@@ -82,24 +82,25 @@ const PillCheck = () => {
     try {
       const token = await getIdToken();
       if (!token) throw new Error("No auth token");
-      const result = await scanDocument(base64, "prescription", token);
-      const meds = (result as { medications?: Array<{ name: string }> }).medications || [];
-      if (meds.length) {
-        meds.forEach((m) => {
-          setPillHistory((prev) => [
-            {
-              name: m.name,
-              time: `Today ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
-              result: "correct",
-              confidence: "AI",
-            },
-            ...prev,
-          ]);
-        });
-        toast({ title: "Scan Complete", description: `Found ${meds.length} medication(s)` });
-      } else {
-        toast({ title: "Scan Complete", description: "No medications found in image" });
-      }
+      const result = await scanDocument(base64, "pill", token) as {
+        verified: boolean;
+        pill_name: string;
+        matched_medications: string[];
+        confidence: string;
+        message: string;
+      };
+      const entry = {
+        name: result.pill_name || "Unknown pill",
+        time: `Today ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+        result: result.verified ? ("correct" as const) : ("warning" as const),
+        confidence: result.confidence || "—",
+      };
+      setPillHistory((prev) => [entry, ...prev]);
+      toast({
+        title: result.verified ? "Pill Verified ✓" : "⚠️ Pill Mismatch",
+        description: result.message,
+        variant: result.verified ? "default" : "destructive",
+      });
     } catch (err) {
       toast({ variant: "destructive", title: "Scan Failed", description: String(err) });
     } finally {

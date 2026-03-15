@@ -19,7 +19,6 @@ from agents.shared.mock_data import (
     ADHERENCE_LOG,
     FAMILY_ALERTS,
     FOOD_LOGS,
-    MEALS_LOG,
     MEDICATIONS,
     PATIENT_PROFILE,
     PRESCRIPTIONS,
@@ -325,13 +324,13 @@ async def detect_health_patterns(days: int = 7, tool_context=None) -> dict:
         adherence, vitals, meals, medications = await asyncio.gather(
             fs.get_adherence_log(user_id, since_date=cutoff),
             fs.get_vitals_log(user_id, since_date=cutoff),
-            fs.get_meals_log(user_id),
+            fs.get_food_logs(user_id),
             fs.get_medications(user_id),
         )
     else:
         adherence = [e for e in ADHERENCE_LOG if e["date"] >= cutoff]
         vitals = [e for e in VITALS_LOG if e["date"] >= cutoff]
-        meals = [e for e in MEALS_LOG if e["date"] >= cutoff]
+        meals = [e for e in FOOD_LOGS if e.get("date", "") >= cutoff]
         medications = MEDICATIONS
 
     alerts: list[dict] = []
@@ -490,12 +489,12 @@ async def predict_health_risks(days: int = 7, tool_context=None) -> dict:
         adherence, vitals, meals = await asyncio.gather(
             fs.get_adherence_log(user_id, since_date=cutoff),
             fs.get_vitals_log(user_id, since_date=cutoff),
-            fs.get_meals_log(user_id),
+            fs.get_food_logs(user_id),
         )
     else:
         adherence = [e for e in ADHERENCE_LOG if e["date"] >= cutoff]
         vitals = [e for e in VITALS_LOG if e["date"] >= cutoff]
-        meals = [e for e in MEALS_LOG if e["date"] >= cutoff]
+        meals = [e for e in FOOD_LOGS if e.get("date", "") >= cutoff]
 
     data_summary = {
         "period": f"last {days} days",
@@ -571,14 +570,14 @@ async def get_patient_history(query: str, tool_context=None) -> dict:
             fs.get_reports(user_id),
             fs.get_medications(user_id),
             fs.get_vitals_log(user_id),
-            fs.get_meals_log(user_id),
+            fs.get_food_logs(user_id),
         )
     else:
         prescriptions = PRESCRIPTIONS
         reports = REPORTS
         medications = MEDICATIONS
         vitals = VITALS_LOG
-        meals = MEALS_LOG
+        meals = FOOD_LOGS
 
     context_block = {
         "medications": medications,

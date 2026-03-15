@@ -88,6 +88,17 @@ PRESCRIPTION_PROMPT = (
     "Return ONLY valid JSON matching the schema. If no medications found, return empty medications array."
 )
 
+PILL_PROMPT = (
+    "You are a pharmaceutical identification expert. Analyze this image of a pill or tablet. "
+    "Identify:\n"
+    "- pill_name: the most likely medication name based on visual characteristics\n"
+    "- color: the color(s) of the pill (e.g. 'white', 'pink and white', 'yellow')\n"
+    "- shape: pill shape (e.g. 'round', 'oval', 'oblong', 'capsule')\n"
+    "- imprint: any text, numbers, or markings imprinted on the pill surface (empty string if none visible)\n"
+    "- notes: any other identifying features (coating, scored, etc.)\n"
+    "Return ONLY valid JSON matching the schema."
+)
+
 REPORT_PROMPT = (
     "You are a medical document scanner. Extract ALL test results from this lab report image. "
     "For each test found, extract:\n"
@@ -149,6 +160,18 @@ REPORT_SCHEMA = genai_types.Schema(
         "date": genai_types.Schema(type="STRING"),
     },
     required=["tests", "lab_name", "date"],
+)
+
+PILL_SCHEMA = genai_types.Schema(
+    type="OBJECT",
+    properties={
+        "pill_name": genai_types.Schema(type="STRING"),
+        "color":     genai_types.Schema(type="STRING"),
+        "shape":     genai_types.Schema(type="STRING"),
+        "imprint":   genai_types.Schema(type="STRING"),
+        "notes":     genai_types.Schema(type="STRING"),
+    },
+    required=["pill_name", "color", "shape", "imprint", "notes"],
 )
 
 # ---------------------------------------------------------------------------
@@ -248,8 +271,8 @@ async def scan_document(
     """
     uid = _verify_token(authorization)
 
-    if body.scan_type not in ("prescription", "report"):
-        raise HTTPException(status_code=400, detail="scan_type must be 'prescription' or 'report'")
+    if body.scan_type not in ("prescription", "report", "pill"):
+        raise HTTPException(status_code=400, detail="scan_type must be 'prescription', 'report', or 'pill'")
 
     # Decode image
     try:
@@ -264,6 +287,9 @@ async def scan_document(
     if body.scan_type == "prescription":
         prompt = PRESCRIPTION_PROMPT
         schema = PRESCRIPTION_SCHEMA
+    elif body.scan_type == "pill":
+        prompt = PILL_PROMPT
+        schema = PILL_SCHEMA
     else:
         prompt = REPORT_PROMPT
         schema = REPORT_SCHEMA
@@ -334,6 +360,46 @@ async def scan_document(
                     extracted["cross_medication_interactions"] = cross_result.get("interactions", [])
         except Exception as exc:
             logger.warning("Drug enrichment failed (non-blocking): %s", exc)
+
+    # --- Pill identification + medication comparison ---
+    if body.scan_type == "pill":
+        from fastapi.responses import JSONResponse as _JSONResponse
+        fs_pill = FirestoreService.get_instance()
+        medications = await fs_pill.get_medications(uid) if fs_pill.is_available else []
+
+        color = extracted.get("color", "").lower()
+        shape = extracted.get("shape", "").lower()
+        imprint = extracted.get("imprint", "").lower()
+        pill_name = extracted.get("pill_name", "")
+
+        matches = []
+        for med in medications:
+            desc = med.get("pill_description") or {}
+            if (desc.get("color", "").lower() == color and
+                    desc.get("shape", "").lower() == shape):
+                matches.append(med["name"])
+            elif pill_name and pill_name.lower() in med["name"].lower():
+                matches.append(med["name"])
+
+        verified = len(matches) > 0
+        message = (
+            f"This pill matches: {', '.join(matches)}. It is safe to take."
+            if verified
+            else "WARNING: This pill does NOT match any of your prescribed medications."
+        )
+        return _JSONResponse({
+            "verified": verified,
+            "pill_name": pill_name,
+            "color": color,
+            "shape": shape,
+            "imprint": imprint,
+            "matched_medications": matches,
+            "confidence": "high" if imprint else "medium",
+            "message": message,
+            "ai_summary": message,
+            "insights": [f"Identified as: {pill_name}", f"Color: {color}, Shape: {shape}"]
+                        + ([f"Imprint: {imprint}"] if imprint else []),
+        })
 
     # AI narrative summary + key insights
     ai = await generate_summary(extracted, body.scan_type)
