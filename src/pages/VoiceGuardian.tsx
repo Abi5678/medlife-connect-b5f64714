@@ -537,7 +537,11 @@ const VoiceGuardian = () => {
           try {
             const { analyzeFood } = await import("@/lib/api");
             const result = await analyzeFood(base64Image);
-            sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+            if (result.calories === 0 && result.food_items.length === 0) {
+              sendText(`[SYSTEM: Food scan could not recognize any food — the frame was blank or unclear. Do NOT call initiate_food_scan again. Tell the patient the camera could not see the food clearly, and ask them to describe what they ate verbally so you can log it manually.]`);
+            } else {
+              sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+            }
           } catch (error) {
             console.error("Food analysis failed", error);
             sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
@@ -574,7 +578,11 @@ const VoiceGuardian = () => {
     try {
       const { analyzeFood } = await import("@/lib/api");
       const result = await analyzeFood(base64Image);
-      sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+      if (result.calories === 0 && result.food_items.length === 0) {
+        sendText(`[SYSTEM: Food scan could not recognize any food — the frame was blank or unclear. Do NOT call initiate_food_scan again. Tell the patient the camera could not see the food clearly, and ask them to describe what they ate verbally so you can log it manually.]`);
+      } else {
+        sendText(`[SYSTEM: Food scan complete — ${result.calories} kcal, ${result.protein_g}g protein, ${result.carbs_g}g carbs, ${result.fat_g}g fat. Items: ${result.food_items.join(", ")}. READ these results to the patient and ask if they want to log this meal.]`);
+      }
     } catch (error) {
       console.error("Food snap failed", error);
       sendText(`[SYSTEM: Food analysis failed. Ask the user to describe the meal instead.]`);
